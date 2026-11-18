@@ -96,8 +96,8 @@ self.addEventListener('push', (event: PushEvent) => {
   event.waitUntil(
     self.registration.showNotification(title, {
       body,
-      icon: '/growy-finance-icon-192.png',
-      badge: '/growy-finance-icon-192.png',
+      icon: '/growy-icon-192.png',
+      badge: '/growy-icon-192.png',
       tag,
       requireInteraction: Boolean(parsed.requireInteraction),
       data: { url: targetUrl },

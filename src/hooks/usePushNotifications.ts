@@ -181,8 +181,8 @@ export function usePushNotifications(profile: UserProfile | null): PushNotificat
               if (payload) {
                 await reg.showNotification(payload.title, {
                   body: payload.body,
-                  icon: '/growy-finance-icon-192.png',
-                  badge: '/growy-finance-icon-192.png',
+                  icon: '/growy-icon-192.png',
+                  badge: '/growy-icon-192.png',
                   tag: payload.tag,
                   requireInteraction: payload.requireInteraction,
                   data: { url: payload.url },
@@ -354,8 +354,8 @@ export function usePushNotifications(profile: UserProfile | null): PushNotificat
         const reg = await navigator.serviceWorker.ready;
         await reg.showNotification('GROWy · Prueba de recordatorio', {
           body: 'Así te avisaremos antes de tu vencimiento para que tu cuenta nunca quede bloqueada.',
-          icon: '/growy-finance-icon-192.png',
-          badge: '/growy-finance-icon-192.png',
+          icon: '/growy-icon-192.png',
+          badge: '/growy-icon-192.png',
           tag: 'growy-test-local',
           data: { url: '/?reminder=payment' },
         });
