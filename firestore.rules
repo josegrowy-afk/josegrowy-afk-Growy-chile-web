@@ -1,0 +1,602 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global safety net: default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Core primitives
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isBootstrappedAdmin() {
+      return isVerifiedUser() &&
+        ('email' in request.auth.token) &&
+        request.auth.token.email is string &&
+        request.auth.token.email.lower() == 'jose.growy@gmail.com';
+    }
+
+    function isAdmin() {
+      return isBootstrappedAdmin() ||
+        (isVerifiedUser() && exists(/databases/$(database)/documents/admins/$(request.auth.uid)));
+    }
+
+    function isComplimentaryTestClient() {
+      return isVerifiedUser() &&
+        ('email' in request.auth.token) &&
+        request.auth.token.email is string &&
+        request.auth.token.email.lower() in ['matias.fonseca.luna@gmail.com'];
+    }
+
+    function isUserActive(userId) {
+      return exists(/databases/$(database)/documents/users/$(userId)) &&
+        get(/databases/$(database)/documents/users/$(userId)).data.accessStatus == 'active';
+    }
+
+    // Entity validation blueprints
+    function isValidLandingContent(lc) {
+      return lc is map &&
+      lc.keys().hasOnly([
+        'heroEyebrow', 'heroPrimaryCta', 'heroChecks',
+        'step1Title', 'step1Desc', 'step2Title', 'step2Desc', 'step3Title', 'step3Desc',
+        'whatIsEyebrow', 'whatIsTitle', 'whatIsBody',
+        'whatIsPillar1Title', 'whatIsPillar1Desc',
+        'whatIsPillar2Title', 'whatIsPillar2Desc',
+        'breakevenEyebrow', 'breakevenTitle', 'breakevenDefinition',
+        'breakevenImportanceTitle', 'breakevenImportancePoints',
+        'breakevenPillarsTitle',
+        'breakevenFixedTitle', 'breakevenFixedDesc',
+        'breakevenVariableTitle', 'breakevenVariableDesc',
+        'breakevenPriceTitle', 'breakevenPriceDesc',
+        'breakevenExampleTitle', 'breakevenExampleBody',
+        'breakevenRealityToProjection', 'breakevenClosingQuote',
+        'equilibrioEyebrow', 'equilibrioTitle', 'equilibrioSubtitle',
+        'equilibrioFeatures', 'equilibrioCtaLabel', 'equilibrioTrustNote',
+        'upcomingEyebrow', 'upcomingTitle', 'upcomingSubtitle',
+        'creatorEyebrow', 'creatorTitle', 'creatorName', 'creatorRole',
+        'creatorPhotoUrl', 'creatorBio', 'creatorClosingNote', 'creatorQuoteCta',
+        'closingTitle', 'closingSubtitle', 'closingCtaLabel'
+      ]) &&
+      (!('heroEyebrow' in lc) || (lc.heroEyebrow is string && lc.heroEyebrow.size() <= 140)) &&
+      (!('heroPrimaryCta' in lc) || (lc.heroPrimaryCta is string && lc.heroPrimaryCta.size() <= 80)) &&
+      (!('heroChecks' in lc) || (lc.heroChecks is string && lc.heroChecks.size() <= 300)) &&
+      (!('step1Title' in lc) || (lc.step1Title is string && lc.step1Title.size() <= 100)) &&
+      (!('step1Desc' in lc) || (lc.step1Desc is string && lc.step1Desc.size() <= 240)) &&
+      (!('step2Title' in lc) || (lc.step2Title is string && lc.step2Title.size() <= 100)) &&
+      (!('step2Desc' in lc) || (lc.step2Desc is string && lc.step2Desc.size() <= 240)) &&
+      (!('step3Title' in lc) || (lc.step3Title is string && lc.step3Title.size() <= 100)) &&
+      (!('step3Desc' in lc) || (lc.step3Desc is string && lc.step3Desc.size() <= 240)) &&
+      (!('whatIsEyebrow' in lc) || (lc.whatIsEyebrow is string && lc.whatIsEyebrow.size() <= 140)) &&
+      (!('whatIsTitle' in lc) || (lc.whatIsTitle is string && lc.whatIsTitle.size() <= 220)) &&
+      (!('whatIsBody' in lc) || (lc.whatIsBody is string && lc.whatIsBody.size() <= 900)) &&
+      (!('whatIsPillar1Title' in lc) || (lc.whatIsPillar1Title is string && lc.whatIsPillar1Title.size() <= 140)) &&
+      (!('whatIsPillar1Desc' in lc) || (lc.whatIsPillar1Desc is string && lc.whatIsPillar1Desc.size() <= 400)) &&
+      (!('whatIsPillar2Title' in lc) || (lc.whatIsPillar2Title is string && lc.whatIsPillar2Title.size() <= 140)) &&
+      (!('whatIsPillar2Desc' in lc) || (lc.whatIsPillar2Desc is string && lc.whatIsPillar2Desc.size() <= 400)) &&
+      (!('breakevenEyebrow' in lc) || (lc.breakevenEyebrow is string && lc.breakevenEyebrow.size() <= 140)) &&
+      (!('breakevenTitle' in lc) || (lc.breakevenTitle is string && lc.breakevenTitle.size() <= 220)) &&
+      (!('breakevenDefinition' in lc) || (lc.breakevenDefinition is string && lc.breakevenDefinition.size() <= 700)) &&
+      (!('breakevenImportanceTitle' in lc) || (lc.breakevenImportanceTitle is string && lc.breakevenImportanceTitle.size() <= 180)) &&
+      (!('breakevenImportancePoints' in lc) || (lc.breakevenImportancePoints is string && lc.breakevenImportancePoints.size() <= 900)) &&
+      (!('breakevenPillarsTitle' in lc) || (lc.breakevenPillarsTitle is string && lc.breakevenPillarsTitle.size() <= 180)) &&
+      (!('breakevenFixedTitle' in lc) || (lc.breakevenFixedTitle is string && lc.breakevenFixedTitle.size() <= 100)) &&
+      (!('breakevenFixedDesc' in lc) || (lc.breakevenFixedDesc is string && lc.breakevenFixedDesc.size() <= 350)) &&
+      (!('breakevenVariableTitle' in lc) || (lc.breakevenVariableTitle is string && lc.breakevenVariableTitle.size() <= 100)) &&
+      (!('breakevenVariableDesc' in lc) || (lc.breakevenVariableDesc is string && lc.breakevenVariableDesc.size() <= 350)) &&
+      (!('breakevenPriceTitle' in lc) || (lc.breakevenPriceTitle is string && lc.breakevenPriceTitle.size() <= 100)) &&
+      (!('breakevenPriceDesc' in lc) || (lc.breakevenPriceDesc is string && lc.breakevenPriceDesc.size() <= 350)) &&
+      (!('breakevenExampleTitle' in lc) || (lc.breakevenExampleTitle is string && lc.breakevenExampleTitle.size() <= 180)) &&
+      (!('breakevenExampleBody' in lc) || (lc.breakevenExampleBody is string && lc.breakevenExampleBody.size() <= 700)) &&
+      (!('breakevenRealityToProjection' in lc) || (lc.breakevenRealityToProjection is string && lc.breakevenRealityToProjection.size() <= 700)) &&
+      (!('breakevenClosingQuote' in lc) || (lc.breakevenClosingQuote is string && lc.breakevenClosingQuote.size() <= 240)) &&
+      (!('equilibrioEyebrow' in lc) || (lc.equilibrioEyebrow is string && lc.equilibrioEyebrow.size() <= 140)) &&
+      (!('equilibrioTitle' in lc) || (lc.equilibrioTitle is string && lc.equilibrioTitle.size() <= 220)) &&
+      (!('equilibrioSubtitle' in lc) || (lc.equilibrioSubtitle is string && lc.equilibrioSubtitle.size() <= 600)) &&
+      (!('equilibrioFeatures' in lc) || (lc.equilibrioFeatures is string && lc.equilibrioFeatures.size() <= 1200)) &&
+      (!('equilibrioCtaLabel' in lc) || (lc.equilibrioCtaLabel is string && lc.equilibrioCtaLabel.size() <= 100)) &&
+      (!('equilibrioTrustNote' in lc) || (lc.equilibrioTrustNote is string && lc.equilibrioTrustNote.size() <= 600)) &&
+      (!('upcomingEyebrow' in lc) || (lc.upcomingEyebrow is string && lc.upcomingEyebrow.size() <= 140)) &&
+      (!('upcomingTitle' in lc) || (lc.upcomingTitle is string && lc.upcomingTitle.size() <= 220)) &&
+      (!('upcomingSubtitle' in lc) || (lc.upcomingSubtitle is string && lc.upcomingSubtitle.size() <= 600)) &&
+      (!('creatorEyebrow' in lc) || (lc.creatorEyebrow is string && lc.creatorEyebrow.size() <= 140)) &&
+      (!('creatorTitle' in lc) || (lc.creatorTitle is string && lc.creatorTitle.size() <= 220)) &&
+      (!('creatorName' in lc) || (lc.creatorName is string && lc.creatorName.size() <= 140)) &&
+      (!('creatorRole' in lc) || (lc.creatorRole is string && lc.creatorRole.size() <= 180)) &&
+      (!('creatorPhotoUrl' in lc) || (lc.creatorPhotoUrl is string && lc.creatorPhotoUrl.size() <= 500)) &&
+      (!('creatorBio' in lc) || (lc.creatorBio is string && lc.creatorBio.size() <= 1400)) &&
+      (!('creatorClosingNote' in lc) || (lc.creatorClosingNote is string && lc.creatorClosingNote.size() <= 350)) &&
+      (!('creatorQuoteCta' in lc) || (lc.creatorQuoteCta is string && lc.creatorQuoteCta.size() <= 80)) &&
+      (!('closingTitle' in lc) || (lc.closingTitle is string && lc.closingTitle.size() <= 220)) &&
+      (!('closingSubtitle' in lc) || (lc.closingSubtitle is string && lc.closingSubtitle.size() <= 600)) &&
+      (!('closingCtaLabel' in lc) || (lc.closingCtaLabel is string && lc.closingCtaLabel.size() <= 100));
+    }
+
+    function isValidAppConfig(data) {
+      return data.keys().hasAll([
+        'paymentUrl', 'priceLabel', 'currencyNote', 'heroTitle', 'heroSubtitle',
+        'guaranteeText', 'contactEmail', 'welcomeMessage', 'announcementText',
+        'announcementActive', 'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'paymentUrl', 'annualPaymentUrl', 'priceLabel', 'currencyNote', 'heroTitle', 'heroSubtitle',
+        'guaranteeText', 'contactEmail', 'welcomeMessage', 'announcementText',
+        'announcementActive', 'landingContent', 'updatedAt'
+      ]) &&
+      data.paymentUrl is string && data.paymentUrl.size() <= 500 &&
+      (!('annualPaymentUrl' in data) || (data.annualPaymentUrl is string && data.annualPaymentUrl.size() <= 500)) &&
+      data.priceLabel is string && data.priceLabel.size() <= 60 &&
+      data.currencyNote is string && data.currencyNote.size() <= 160 &&
+      data.heroTitle is string && data.heroTitle.size() <= 160 &&
+      data.heroSubtitle is string && data.heroSubtitle.size() <= 400 &&
+      data.guaranteeText is string && data.guaranteeText.size() <= 400 &&
+      data.contactEmail is string && data.contactEmail.size() <= 120 &&
+      data.welcomeMessage is string && data.welcomeMessage.size() <= 400 &&
+      data.announcementText is string && data.announcementText.size() <= 300 &&
+      data.announcementActive is bool &&
+      (!('landingContent' in data) || isValidLandingContent(data.landingContent)) &&
+      data.updatedAt is timestamp;
+    }
+
+    function isValidFaq(data) {
+      return data.keys().hasAll([
+        'question', 'answer', 'category', 'order', 'published', 'createdAt', 'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'question', 'answer', 'category', 'order', 'published', 'createdAt', 'updatedAt'
+      ]) &&
+      data.question is string && data.question.size() >= 3 && data.question.size() <= 250 &&
+      data.answer is string && data.answer.size() >= 3 && data.answer.size() <= 2000 &&
+      data.category in ['pagos', 'uso', 'calculos', 'cuenta', 'soporte'] &&
+      data.order is number && data.order >= 0 && data.order <= 10000 &&
+      data.published is bool &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    function isValidUserProfile(data) {
+      return data.keys().hasAll([
+        'uid', 'email', 'displayName', 'role', 'accessStatus',
+        'paymentStatus', 'createdAt', 'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'uid', 'email', 'displayName', 'role', 'accessStatus',
+        'paymentStatus', 'planType', 'billingDay', 'nextPaymentDueAt', 'lastPaymentAt',
+        'accessCodeUsed', 'paymentReference', 'onboardingCompleted', 'createdAt', 'updatedAt'
+      ]) &&
+      isValidId(data.uid) &&
+      data.email is string && data.email.size() >= 3 && data.email.size() <= 160 &&
+      data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 100 &&
+      data.role in ['user', 'admin'] &&
+      data.accessStatus in ['pending', 'active', 'revoked'] &&
+      data.paymentStatus in ['unpaid', 'paid', 'code_redeemed', 'manual_admin'] &&
+      (!('planType' in data) || data.planType in ['monthly', 'annual']) &&
+      (!('billingDay' in data) || (data.billingDay is number && data.billingDay in [5, 15, 30])) &&
+      (!('nextPaymentDueAt' in data) || (data.nextPaymentDueAt is string && data.nextPaymentDueAt.size() == 10 && data.nextPaymentDueAt.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$'))) &&
+      (!('lastPaymentAt' in data) || (data.lastPaymentAt is string && data.lastPaymentAt.size() <= 40)) &&
+      (!('accessCodeUsed' in data) || (data.accessCodeUsed is string && data.accessCodeUsed.size() <= 40)) &&
+      (!('paymentReference' in data) || (data.paymentReference is string && data.paymentReference.size() <= 120)) &&
+      (!('onboardingCompleted' in data) || data.onboardingCompleted is bool) &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    function isValidAdminMarker(data) {
+      return data.keys().hasAll(['uid', 'email', 'grantedBy', 'createdAt']) &&
+        data.keys().hasOnly(['uid', 'email', 'grantedBy', 'createdAt']) &&
+        isValidId(data.uid) &&
+        data.email is string && data.email.size() >= 3 && data.email.size() <= 160 &&
+        data.grantedBy is string && data.grantedBy.size() >= 1 && data.grantedBy.size() <= 128 &&
+        data.createdAt is timestamp;
+    }
+
+    function isValidAccessCode(data) {
+      return data.keys().hasAll(['code', 'status', 'createdBy', 'createdAt']) &&
+        data.keys().hasOnly([
+          'code', 'status', 'note', 'createdBy', 'createdAt', 'usedByUid', 'usedByEmail', 'usedAt'
+        ]) &&
+        data.code is string && data.code.size() >= 4 && data.code.size() <= 40 &&
+        data.code.matches('^[A-Z0-9\\-]+$') &&
+        data.status in ['unused', 'used', 'revoked'] &&
+        (!('note' in data) || (data.note is string && data.note.size() <= 160)) &&
+        data.createdBy is string && data.createdBy.size() >= 1 && data.createdBy.size() <= 128 &&
+        data.createdAt is timestamp &&
+        (!('usedByUid' in data) || (data.usedByUid is string && data.usedByUid.size() <= 128)) &&
+        (!('usedByEmail' in data) || (data.usedByEmail is string && data.usedByEmail.size() <= 160)) &&
+        (!('usedAt' in data) || data.usedAt is timestamp);
+    }
+
+    function isValidBusiness(data) {
+      return data.keys().hasAll([
+        'id', 'ownerUid', 'name', 'currency', 'startMonth', 'targetProfit',
+        'expectedMonthlyUnits', 'monthlyGrowthPercent', 'projectionMonthsCount',
+        'fixedCosts', 'products', 'createdAt', 'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'id', 'ownerUid', 'name', 'tagline', 'currency', 'startMonth', 'targetProfit',
+        'expectedMonthlyUnits', 'monthlyGrowthPercent', 'projectionMonthsCount',
+        'baseMonthlyUnitsByProduct', 'fixedCosts', 'products', 'projectionOverrides',
+        'actuals', 'initialCashBalance', 'cashBalanceConfigured', 'workingCapitalExtras',
+        'receivables', 'payables', 'inventoryMovements', 'isDemo', 'createdAt', 'updatedAt'
+      ]) &&
+      isValidId(data.id) &&
+      isValidId(data.ownerUid) &&
+      data.name is string && data.name.size() >= 1 && data.name.size() <= 120 &&
+      (!('tagline' in data) || (data.tagline is string && data.tagline.size() <= 200)) &&
+      data.currency is map &&
+      data.startMonth is string && data.startMonth.size() == 7 &&
+      data.targetProfit is number && data.targetProfit >= 0 &&
+      data.expectedMonthlyUnits is number && data.expectedMonthlyUnits >= 0 &&
+      data.monthlyGrowthPercent is number &&
+      data.projectionMonthsCount is number && data.projectionMonthsCount >= 12 && data.projectionMonthsCount <= 60 &&
+      (!('baseMonthlyUnitsByProduct' in data) || data.baseMonthlyUnitsByProduct is map) &&
+      data.fixedCosts is list && data.fixedCosts.size() <= 100 &&
+      data.products is list && data.products.size() <= 200 &&
+      (!('projectionOverrides' in data) || data.projectionOverrides is map) &&
+      (!('actuals' in data) || data.actuals is map) &&
+      (!('initialCashBalance' in data) || data.initialCashBalance is number) &&
+      (!('cashBalanceConfigured' in data) || data.cashBalanceConfigured is bool) &&
+      (!('workingCapitalExtras' in data) || data.workingCapitalExtras is map) &&
+      (!('receivables' in data) || (data.receivables is list && data.receivables.size() <= 400)) &&
+      (!('payables' in data) || (data.payables is list && data.payables.size() <= 400)) &&
+      (!('inventoryMovements' in data) || (data.inventoryMovements is list && data.inventoryMovements.size() <= 800)) &&
+      (!('isDemo' in data) || data.isDemo is bool) &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    function isValidTicketAttachment(att) {
+      return att is map &&
+        att.keys().hasAll(['name', 'mimeType', 'sizeBytes', 'dataUrl']) &&
+        att.keys().hasOnly(['name', 'mimeType', 'sizeBytes', 'dataUrl']) &&
+        att.name is string && att.name.size() >= 1 && att.name.size() <= 160 &&
+        att.mimeType is string && att.mimeType.size() >= 1 && att.mimeType.size() <= 100 &&
+        att.sizeBytes is number && att.sizeBytes >= 0 && att.sizeBytes <= 400000 &&
+        att.dataUrl is string && att.dataUrl.size() >= 1 && att.dataUrl.size() <= 400000;
+    }
+
+    function isValidSupportTicket(data) {
+      return data.keys().hasAll([
+        'userId', 'name', 'email', 'subject', 'message', 'status', 'createdAt', 'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'userId', 'name', 'email', 'subject', 'message', 'ticketType', 'attachments', 'status', 'adminReply', 'createdAt', 'updatedAt'
+      ]) &&
+      data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+      data.name is string && data.name.size() >= 2 && data.name.size() <= 100 &&
+      data.email is string && data.email.size() >= 5 && data.email.size() <= 160 &&
+      data.subject is string && data.subject.size() >= 3 && data.subject.size() <= 160 &&
+      data.message is string && data.message.size() >= 5 && data.message.size() <= 2000 &&
+      (!('ticketType' in data) || data.ticketType in ['duda', 'sugerencia', 'problema']) &&
+      (!('attachments' in data) || (
+        data.attachments is list &&
+        data.attachments.size() <= 2 &&
+        (data.attachments.size() == 0 || isValidTicketAttachment(data.attachments[0])) &&
+        (data.attachments.size() <= 1 || isValidTicketAttachment(data.attachments[1]))
+      )) &&
+      data.status in ['nuevo', 'respondido', 'cerrado'] &&
+      (!('adminReply' in data) || (data.adminReply is string && data.adminReply.size() <= 2000)) &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    function isValidAdminLog(data) {
+      return data.keys().hasAll(['adminUid', 'adminEmail', 'action', 'target', 'details', 'createdAt']) &&
+        data.keys().hasOnly(['adminUid', 'adminEmail', 'action', 'target', 'details', 'createdAt']) &&
+        data.adminUid is string && data.adminUid.size() >= 1 && data.adminUid.size() <= 128 &&
+        data.adminEmail is string && data.adminEmail.size() >= 3 && data.adminEmail.size() <= 160 &&
+        data.action is string && data.action.size() >= 2 && data.action.size() <= 120 &&
+        data.target is string && data.target.size() >= 1 && data.target.size() <= 160 &&
+        data.details is string && data.details.size() <= 400 &&
+        data.createdAt is timestamp;
+    }
+
+    function isValidPushSubscription(data) {
+      return data.keys().hasAll([
+        'id', 'ownerUid', 'endpoint', 'keys', 'enabled', 'createdAt', 'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'id', 'ownerUid', 'endpoint', 'keys', 'planType', 'billingDay',
+        'nextPaymentDueAt', 'enabled', 'userAgent', 'createdAt', 'updatedAt'
+      ]) &&
+      isValidId(data.id) &&
+      isValidId(data.ownerUid) &&
+      data.endpoint is string && data.endpoint.size() >= 10 && data.endpoint.size() <= 1200 &&
+      data.keys is map &&
+      data.keys.keys().hasAll(['p256dh', 'auth']) &&
+      data.keys.keys().hasOnly(['p256dh', 'auth']) &&
+      data.keys.p256dh is string && data.keys.p256dh.size() >= 10 && data.keys.p256dh.size() <= 300 &&
+      data.keys.auth is string && data.keys.auth.size() >= 6 && data.keys.auth.size() <= 150 &&
+      (!('planType' in data) || data.planType in ['monthly', 'annual']) &&
+      (!('billingDay' in data) || (data.billingDay is number && data.billingDay in [5, 15, 30])) &&
+      (!('nextPaymentDueAt' in data) || (data.nextPaymentDueAt is string && data.nextPaymentDueAt.size() == 10 && data.nextPaymentDueAt.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$'))) &&
+      data.enabled is bool &&
+      (!('userAgent' in data) || (data.userAgent is string && data.userAgent.size() <= 250)) &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    function isValidPaymentHistory(data) {
+      return data.keys().hasAll([
+        'id', 'ownerUid', 'planType', 'amountClp', 'transactionId', 'paymentMethod',
+        'paidAt', 'periodCoveredEnd', 'receiptStatus', 'createdAt', 'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'id', 'ownerUid', 'planType', 'amountClp', 'transactionId', 'paymentMethod',
+        'paidAt', 'periodCoveredEnd', 'receiptStatus', 'receiptNumber', 'receiptSentTo',
+        'receiptSentAt', 'notes', 'createdAt', 'updatedAt'
+      ]) &&
+      isValidId(data.id) &&
+      isValidId(data.ownerUid) &&
+      data.planType in ['monthly', 'annual'] &&
+      data.amountClp is number && data.amountClp >= 0 && data.amountClp <= 10000000 &&
+      data.transactionId is string && data.transactionId.size() >= 1 && data.transactionId.size() <= 160 &&
+      data.paymentMethod in ['mercadopago', 'codigo_acceso', 'registro_admin'] &&
+      data.paidAt is string && data.paidAt.size() >= 10 && data.paidAt.size() <= 40 &&
+      data.periodCoveredEnd is string && data.periodCoveredEnd.size() == 10 && data.periodCoveredEnd.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$') &&
+      data.receiptStatus in ['enviado_correo', 'pendiente_envio', 'disponible_descarga'] &&
+      (!('receiptNumber' in data) || (data.receiptNumber is string && data.receiptNumber.size() <= 60)) &&
+      (!('receiptSentTo' in data) || (data.receiptSentTo is string && data.receiptSentTo.size() <= 160)) &&
+      (!('receiptSentAt' in data) || (data.receiptSentAt is string && data.receiptSentAt.size() <= 40)) &&
+      (!('notes' in data) || (data.notes is string && data.notes.size() <= 400)) &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    // 1. Public App Configuration
+    match /appConfig/{configId} {
+      allow get: if isValidId(configId);
+      allow list: if true;
+      allow create: if isValidId(configId) && isAdmin() && isValidAppConfig(incoming()) && incoming().updatedAt == request.time;
+      allow update: if isValidId(configId) && isAdmin() && isValidAppConfig(incoming()) && incoming().updatedAt == request.time;
+      allow delete: if false;
+    }
+
+    // 2. FAQs
+    match /faqs/{faqId} {
+      allow get: if isValidId(faqId) && (existing().published == true || isAdmin());
+      allow list: if existing().published == true || isAdmin();
+      allow create: if isValidId(faqId) && isAdmin() && isValidFaq(incoming()) &&
+        incoming().createdAt == request.time && incoming().updatedAt == request.time;
+      allow update: if isValidId(faqId) && isAdmin() && isValidFaq(incoming()) &&
+        incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time;
+      allow delete: if isValidId(faqId) && isAdmin();
+    }
+
+    // 3. Admins Markers
+    match /admins/{adminUid} {
+      allow get: if isValidId(adminUid) && (isOwner(adminUid) || isAdmin());
+      allow list: if isAdmin();
+      allow create: if isValidId(adminUid) && isAdmin() && isValidAdminMarker(incoming()) &&
+        incoming().uid == adminUid && incoming().createdAt == request.time;
+      allow update: if false;
+      allow delete: if isValidId(adminUid) && isAdmin();
+    }
+
+    // 4. Users (PII + Access Control + Atomic Code Redemption)
+    match /users/{userId} {
+      allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
+      allow list: if isAdmin();
+
+      allow create: if isValidId(userId) && isValidUserProfile(incoming()) &&
+        incoming().uid == userId &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time && (
+          isAdmin() ||
+          (isOwner(userId) && isComplimentaryTestClient() &&
+            incoming().role == 'user' &&
+            incoming().accessStatus == 'active' &&
+            incoming().paymentStatus == 'manual_admin') ||
+          (isOwner(userId) && isVerifiedUser() &&
+            incoming().role == 'user' &&
+            incoming().accessStatus == 'pending' &&
+            incoming().paymentStatus == 'unpaid')
+        );
+
+      allow update: if isValidId(userId) && isSignedIn() && isValidUserProfile(incoming()) &&
+        incoming().uid == existing().uid &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          isAdmin() ||
+          (isOwner(userId) && isComplimentaryTestClient() &&
+            existing().role == 'user' &&
+            incoming().role == 'user' &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['accessStatus', 'paymentStatus', 'paymentReference', 'updatedAt']) &&
+            incoming().accessStatus == 'active' &&
+            incoming().paymentStatus == 'manual_admin') ||
+          (isOwner(userId) && isVerifiedUser() &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'updatedAt'])) ||
+          (isOwner(userId) && isVerifiedUser() &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['onboardingCompleted', 'updatedAt']) &&
+            incoming().onboardingCompleted is bool) ||
+          (isOwner(userId) && isVerifiedUser() &&
+            existing().accessStatus in ['pending', 'active'] &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['billingDay', 'planType', 'updatedAt'])) ||
+          (isOwner(userId) && isVerifiedUser() &&
+            existing().accessStatus == 'active' &&
+            !('nextPaymentDueAt' in existing()) &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['billingDay', 'planType', 'nextPaymentDueAt', 'updatedAt'])) ||
+          (isOwner(userId) && isVerifiedUser() &&
+            existing().accessStatus in ['pending', 'active'] &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['accessStatus', 'paymentStatus', 'planType', 'accessCodeUsed', 'nextPaymentDueAt', 'lastPaymentAt', 'updatedAt']) &&
+            incoming().accessStatus == 'active' &&
+            incoming().paymentStatus == 'code_redeemed' &&
+            'accessCodeUsed' in incoming() &&
+            isValidId(incoming().accessCodeUsed) &&
+            get(/databases/$(database)/documents/accessCodes/$(incoming().accessCodeUsed)).data.status == 'unused' &&
+            getAfter(/databases/$(database)/documents/accessCodes/$(incoming().accessCodeUsed)).data.status == 'used' &&
+            getAfter(/databases/$(database)/documents/accessCodes/$(incoming().accessCodeUsed)).data.usedByUid == request.auth.uid)
+        );
+
+      allow delete: if isValidId(userId) && isAdmin();
+
+      // 5. Private Businesses per User
+      match /businesses/{businessId} {
+        allow get: if isValidId(userId) && isValidId(businessId) && (isOwner(userId) || isAdmin());
+        allow list: if isValidId(userId) && (isOwner(userId) || isAdmin());
+
+        allow create: if isValidId(userId) && isValidId(businessId) && isValidBusiness(incoming()) &&
+          incoming().id == businessId &&
+          incoming().ownerUid == userId &&
+          incoming().createdAt == request.time &&
+          incoming().updatedAt == request.time && (
+            isAdmin() ||
+            (isOwner(userId) && isVerifiedUser() && isUserActive(userId))
+          );
+
+        allow update: if isValidId(userId) && isValidId(businessId) && isSignedIn() && isValidBusiness(incoming()) &&
+          incoming().id == existing().id &&
+          incoming().ownerUid == existing().ownerUid &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt == request.time && (
+            isAdmin() ||
+            (isOwner(userId) && isVerifiedUser() && isUserActive(userId))
+          );
+
+        allow delete: if isValidId(userId) && isValidId(businessId) && (
+          isAdmin() ||
+          (isOwner(userId) && isVerifiedUser() && isUserActive(userId))
+        );
+      }
+
+      // 5b. Web Push Subscriptions per User
+      match /pushSubscriptions/{subscriptionId} {
+        allow get: if isValidId(userId) && isValidId(subscriptionId) && (isOwner(userId) || isAdmin());
+        allow list: if isValidId(userId) && (isOwner(userId) || isAdmin());
+
+        allow create: if isValidId(userId) && isValidId(subscriptionId) && isValidPushSubscription(incoming()) &&
+          incoming().id == subscriptionId &&
+          incoming().ownerUid == userId &&
+          incoming().createdAt == request.time &&
+          incoming().updatedAt == request.time && (
+            isAdmin() ||
+            (isOwner(userId) && isVerifiedUser() && isUserActive(userId))
+          );
+
+        allow update: if isValidId(userId) && isValidId(subscriptionId) && isSignedIn() && isValidPushSubscription(incoming()) &&
+          incoming().id == existing().id &&
+          incoming().ownerUid == existing().ownerUid &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt == request.time && (
+            isAdmin() ||
+            (isOwner(userId) && isVerifiedUser() && isUserActive(userId))
+          );
+
+        allow delete: if isValidId(userId) && isValidId(subscriptionId) && (
+          isAdmin() ||
+          (isOwner(userId) && isVerifiedUser())
+        );
+      }
+
+      // 5c. Payment History & Receipts per User
+      match /paymentHistory/{paymentId} {
+        allow get: if isValidId(userId) && isValidId(paymentId) && (isOwner(userId) || isAdmin());
+        allow list: if isValidId(userId) && (isOwner(userId) || isAdmin());
+
+        allow create: if isValidId(userId) && isValidId(paymentId) && isValidPaymentHistory(incoming()) &&
+          incoming().id == paymentId &&
+          incoming().ownerUid == userId &&
+          incoming().createdAt == request.time &&
+          incoming().updatedAt == request.time && (
+            isAdmin() ||
+            (isOwner(userId) && isVerifiedUser())
+          );
+
+        allow update: if isValidId(userId) && isValidId(paymentId) && isSignedIn() && isValidPaymentHistory(incoming()) &&
+          incoming().id == existing().id &&
+          incoming().ownerUid == existing().ownerUid &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt == request.time && (
+            isAdmin() ||
+            (isOwner(userId) && isVerifiedUser() &&
+              incoming().diff(existing()).affectedKeys().hasOnly([
+                'receiptStatus', 'receiptNumber', 'receiptSentTo', 'receiptSentAt', 'updatedAt'
+              ]))
+          );
+
+        allow delete: if isValidId(userId) && isValidId(paymentId) && isAdmin();
+      }
+    }
+
+    // 6. Unique Access Codes
+    match /accessCodes/{codeId} {
+      allow get: if isValidId(codeId) && (isAdmin() || isVerifiedUser());
+      allow list: if isAdmin();
+
+      allow create: if isValidId(codeId) && isAdmin() && isValidAccessCode(incoming()) &&
+        incoming().code == codeId &&
+        incoming().status == 'unused' &&
+        incoming().createdAt == request.time;
+
+      allow update: if isValidId(codeId) && isSignedIn() && isValidAccessCode(incoming()) &&
+        incoming().code == existing().code &&
+        incoming().createdBy == existing().createdBy &&
+        incoming().createdAt == existing().createdAt && (
+          isAdmin() ||
+          (isVerifiedUser() &&
+            existing().status == 'unused' &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['status', 'usedByUid', 'usedByEmail', 'usedAt']) &&
+            incoming().status == 'used' &&
+            incoming().usedByUid == request.auth.uid &&
+            incoming().usedAt == request.time &&
+            getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.accessCodeUsed == codeId &&
+            getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.accessStatus == 'active')
+        );
+
+      allow delete: if isValidId(codeId) && isAdmin();
+    }
+
+    // 7. Support Tickets
+    match /supportTickets/{ticketId} {
+      allow get: if isValidId(ticketId) && (isAdmin() || (isSignedIn() && existing().userId == request.auth.uid));
+      allow list: if isAdmin() || (isSignedIn() && existing().userId == request.auth.uid);
+
+      allow create: if isValidId(ticketId) && isValidSupportTicket(incoming()) &&
+        'ticketType' in incoming() &&
+        incoming().status == 'nuevo' &&
+        !('adminReply' in incoming()) &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        (request.auth == null ? incoming().userId == 'guest' : incoming().userId == request.auth.uid);
+
+      allow update: if isValidId(ticketId) && isAdmin() && isValidSupportTicket(incoming()) &&
+        incoming().userId == existing().userId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time;
+
+      allow delete: if isValidId(ticketId) && isAdmin();
+    }
+
+    // 8. Admin Audit Logs (Append-only)
+    match /adminLogs/{logId} {
+      allow get, list: if isAdmin();
+      allow create: if isValidId(logId) && isAdmin() && isValidAdminLog(incoming()) &&
+        incoming().adminUid == request.auth.uid &&
+        incoming().createdAt == request.time;
+      allow update, delete: if false;
+    }
+  }
+}

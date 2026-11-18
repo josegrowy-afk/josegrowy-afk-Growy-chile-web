@@ -1,0 +1,6 @@
+{
+  "name": "Luna Numérica",
+  "description": "Planificador financiero boho, calculadora de punto de equilibrio, metas de ganancia y proyecciones mes a mes para emprendedores.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

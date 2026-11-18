@@ -1,0 +1,296 @@
+{
+  "entities": {
+    "AppConfig": {
+      "title": "AppConfig",
+      "description": "Configuración editable de la landing, enlace de pago, precio y anuncios globales.",
+      "type": "object",
+      "properties": {
+        "paymentUrl": { "type": "string", "maxLength": 500 },
+        "annualPaymentUrl": { "type": "string", "maxLength": 500 },
+        "priceLabel": { "type": "string", "maxLength": 60 },
+        "currencyNote": { "type": "string", "maxLength": 160 },
+        "heroTitle": { "type": "string", "maxLength": 160 },
+        "heroSubtitle": { "type": "string", "maxLength": 400 },
+        "guaranteeText": { "type": "string", "maxLength": 400 },
+        "contactEmail": { "type": "string", "maxLength": 120 },
+        "welcomeMessage": { "type": "string", "maxLength": 400 },
+        "announcementText": { "type": "string", "maxLength": 300 },
+        "announcementActive": { "type": "boolean" },
+        "landingContent": {
+          "type": "object",
+          "description": "Textos editables de cada sección de la landing pública de Growy."
+        },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "paymentUrl",
+        "priceLabel",
+        "currencyNote",
+        "heroTitle",
+        "heroSubtitle",
+        "guaranteeText",
+        "contactEmail",
+        "welcomeMessage",
+        "announcementText",
+        "announcementActive",
+        "updatedAt"
+      ]
+    },
+    "FaqItem": {
+      "title": "FaqItem",
+      "description": "Pregunta frecuente editable por el administrador.",
+      "type": "object",
+      "properties": {
+        "question": { "type": "string", "minLength": 3, "maxLength": 250 },
+        "answer": { "type": "string", "minLength": 3, "maxLength": 2000 },
+        "category": {
+          "type": "string",
+          "enum": ["pagos", "uso", "calculos", "cuenta", "soporte"]
+        },
+        "order": { "type": "number" },
+        "published": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["question", "answer", "category", "order", "published", "createdAt", "updatedAt"]
+    },
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Perfil de usuario con rol, suscripción mensual ($5.990) y fecha de pago (5, 15 o 30).",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "email": { "type": "string", "maxLength": 160 },
+        "displayName": { "type": "string", "maxLength": 100 },
+        "role": { "type": "string", "enum": ["user", "admin"] },
+        "accessStatus": { "type": "string", "enum": ["pending", "active", "revoked"] },
+        "paymentStatus": {
+          "type": "string",
+          "enum": ["unpaid", "paid", "code_redeemed", "manual_admin"]
+        },
+        "planType": { "type": "string", "enum": ["monthly", "annual"] },
+        "billingDay": { "type": "number", "enum": [5, 15, 30] },
+        "nextPaymentDueAt": { "type": "string", "maxLength": 10, "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" },
+        "lastPaymentAt": { "type": "string", "maxLength": 40 },
+        "accessCodeUsed": { "type": "string", "maxLength": 40 },
+        "paymentReference": { "type": "string", "maxLength": 120 },
+        "onboardingCompleted": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "uid",
+        "email",
+        "displayName",
+        "role",
+        "accessStatus",
+        "paymentStatus",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "AdminMarker": {
+      "title": "AdminMarker",
+      "description": "Documento marcador de rol administrador verificado en servidor.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "email": { "type": "string", "maxLength": 160 },
+        "grantedBy": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "grantedBy", "createdAt"]
+    },
+    "AccessCode": {
+      "title": "AccessCode",
+      "description": "Código único de acceso generado por el administrador para activar cuentas.",
+      "type": "object",
+      "properties": {
+        "code": { "type": "string", "minLength": 4, "maxLength": 40, "pattern": "^[A-Z0-9\\-]+$" },
+        "status": { "type": "string", "enum": ["unused", "used", "revoked"] },
+        "note": { "type": "string", "maxLength": 160 },
+        "createdBy": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "usedByUid": { "type": "string", "maxLength": 128 },
+        "usedByEmail": { "type": "string", "maxLength": 160 },
+        "usedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["code", "status", "createdBy", "createdAt"]
+    },
+    "BusinessWorkspaceDoc": {
+      "title": "BusinessWorkspaceDoc",
+      "description": "Espacio financiero de un negocio perteneciente a un usuario.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "ownerUid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "tagline": { "type": "string", "maxLength": 200 },
+        "currency": { "type": "object" },
+        "startMonth": { "type": "string", "maxLength": 7 },
+        "targetProfit": { "type": "number" },
+        "expectedMonthlyUnits": { "type": "number" },
+        "monthlyGrowthPercent": { "type": "number" },
+        "projectionMonthsCount": { "type": "number" },
+        "baseMonthlyUnitsByProduct": { "type": "object" },
+        "fixedCosts": { "type": "array" },
+        "products": { "type": "array" },
+        "projectionOverrides": { "type": "object" },
+        "actuals": { "type": "object" },
+        "initialCashBalance": { "type": "number" },
+        "cashBalanceConfigured": { "type": "boolean" },
+        "workingCapitalExtras": { "type": "object" },
+        "receivables": { "type": "array" },
+        "payables": { "type": "array" },
+        "inventoryMovements": { "type": "array" },
+        "isDemo": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id",
+        "ownerUid",
+        "name",
+        "currency",
+        "startMonth",
+        "targetProfit",
+        "expectedMonthlyUnits",
+        "monthlyGrowthPercent",
+        "projectionMonthsCount",
+        "fixedCosts",
+        "products",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "SupportTicket": {
+      "title": "SupportTicket",
+      "description": "Mensaje de duda, sugerencia o problema con documentos adjuntos enviado al administrador (jose.growy@gmail.com).",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "minLength": 2, "maxLength": 100 },
+        "email": { "type": "string", "minLength": 5, "maxLength": 160 },
+        "subject": { "type": "string", "minLength": 3, "maxLength": 160 },
+        "message": { "type": "string", "minLength": 5, "maxLength": 2000 },
+        "ticketType": { "type": "string", "enum": ["duda", "sugerencia", "problema"] },
+        "attachments": { "type": "array" },
+        "status": { "type": "string", "enum": ["nuevo", "respondido", "cerrado"] },
+        "adminReply": { "type": "string", "maxLength": 2000 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "name", "email", "subject", "message", "status", "createdAt", "updatedAt"]
+    },
+    "AdminLog": {
+      "title": "AdminLog",
+      "description": "Registro inmutable de acciones administrativas.",
+      "type": "object",
+      "properties": {
+        "adminUid": { "type": "string", "maxLength": 128 },
+        "adminEmail": { "type": "string", "maxLength": 160 },
+        "action": { "type": "string", "maxLength": 120 },
+        "target": { "type": "string", "maxLength": 160 },
+        "details": { "type": "string", "maxLength": 400 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["adminUid", "adminEmail", "action", "target", "details", "createdAt"]
+    },
+    "PushSubscriptionDoc": {
+      "title": "PushSubscriptionDoc",
+      "description": "Suscripción Web Push por dispositivo para recordar el pago antes del vencimiento.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "ownerUid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "endpoint": { "type": "string", "maxLength": 1200 },
+        "keys": { "type": "object" },
+        "planType": { "type": "string", "enum": ["monthly", "annual"] },
+        "billingDay": { "type": "number", "enum": [5, 15, 30] },
+        "nextPaymentDueAt": { "type": "string", "maxLength": 10, "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" },
+        "enabled": { "type": "boolean" },
+        "userAgent": { "type": "string", "maxLength": 250 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "ownerUid", "endpoint", "keys", "enabled", "createdAt", "updatedAt"]
+    },
+    "PaymentHistoryDoc": {
+      "title": "PaymentHistoryDoc",
+      "description": "Historial de pagos mensuales y anuales con ID de transacción, monto y estado del comprobante.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "ownerUid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "planType": { "type": "string", "enum": ["monthly", "annual"] },
+        "amountClp": { "type": "number" },
+        "transactionId": { "type": "string", "maxLength": 160 },
+        "paymentMethod": { "type": "string", "enum": ["mercadopago", "codigo_acceso", "registro_admin"] },
+        "paidAt": { "type": "string", "maxLength": 40 },
+        "periodCoveredEnd": { "type": "string", "maxLength": 10, "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" },
+        "receiptStatus": { "type": "string", "enum": ["enviado_correo", "pendiente_envio", "disponible_descarga"] },
+        "receiptNumber": { "type": "string", "maxLength": 60 },
+        "receiptSentTo": { "type": "string", "maxLength": 160 },
+        "receiptSentAt": { "type": "string", "maxLength": 40 },
+        "notes": { "type": "string", "maxLength": 400 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id",
+        "ownerUid",
+        "planType",
+        "amountClp",
+        "transactionId",
+        "paymentMethod",
+        "paidAt",
+        "periodCoveredEnd",
+        "receiptStatus",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/appConfig/{configId}": {
+      "schema": { "$ref": "#/entities/AppConfig" },
+      "description": "Configuración pública de la landing, enlace PAYMENT_URL y anuncios."
+    },
+    "/faqs/{faqId}": {
+      "schema": { "$ref": "#/entities/FaqItem" },
+      "description": "Preguntas frecuentes públicas y administrables."
+    },
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Perfiles de usuario con estado de pago y rol."
+    },
+    "/admins/{adminUid}": {
+      "schema": { "$ref": "#/entities/AdminMarker" },
+      "description": "Marcadores de administradores verificados."
+    },
+    "/accessCodes/{codeId}": {
+      "schema": { "$ref": "#/entities/AccessCode" },
+      "description": "Códigos de acceso de un solo uso."
+    },
+    "/users/{userId}/businesses/{businessId}": {
+      "schema": { "$ref": "#/entities/BusinessWorkspaceDoc" },
+      "description": "Negocios y datos financieros privados de cada usuario."
+    },
+    "/users/{userId}/pushSubscriptions/{subscriptionId}": {
+      "schema": { "$ref": "#/entities/PushSubscriptionDoc" },
+      "description": "Suscripciones Web Push registradas por cada usuario para alertas de vencimiento."
+    },
+    "/users/{userId}/paymentHistory/{paymentId}": {
+      "schema": { "$ref": "#/entities/PaymentHistoryDoc" },
+      "description": "Historial transparente de pagos mensuales y anuales y estado de comprobantes de cada usuario."
+    },
+    "/supportTickets/{ticketId}": {
+      "schema": { "$ref": "#/entities/SupportTicket" },
+      "description": "Mensajes de soporte dirigidos al administrador."
+    },
+    "/adminLogs/{logId}": {
+      "schema": { "$ref": "#/entities/AdminLog" },
+      "description": "Bitácora de auditoría administrativa."
+    }
+  }
+}
