@@ -187,13 +187,55 @@ export const BohoLeafMotif: React.FC<{ className?: string }> = ({
 export const GrowyCharacterArtwork: React.FC<{ className?: string }> = ({
   className = 'w-full max-w-[330px] mx-auto block select-none',
 }) => (
-  <img
-    src="/assets/aistudio/image_18d9f62a.png"
-    alt="Personaje oficial de GROWy.: criatura lila con brote de dos hojas en equilibrio sobre una moneda, sosteniendo una ampolleta de idea y monedas de crecimiento"
-    className={className}
-    draggable={false}
-    referrerPolicy="no-referrer"
-  />
+  <div className={`relative ${className}`}>
+    {/* Resplandor dorado suave detrás de la ampolleta */}
+    <span
+      aria-hidden="true"
+      className="pointer-events-none absolute z-0 rounded-full growy-bulb-halo"
+      style={{
+        left: '28.3%',
+        top: '31.5%',
+        width: '25%',
+        aspectRatio: '1 / 1',
+        background:
+          'radial-gradient(circle, rgba(255, 224, 102, 0.95) 0%, rgba(251, 211, 92, 0.55) 42%, rgba(251, 211, 92, 0) 74%)',
+        filter: 'blur(9px)',
+      }}
+    />
+    <img
+      src="/assets/aistudio/image_18d9f62a.png"
+      alt="Personaje oficial de GROWy.: criatura lila con brote de dos hojas en equilibrio sobre una moneda, sosteniendo una ampolleta de idea y monedas de crecimiento"
+      className="relative z-10 w-full h-auto block select-none"
+      draggable={false}
+      referrerPolicy="no-referrer"
+    />
+    {/* Destello cálido sobre el cristal de la ampolleta */}
+    <span
+      aria-hidden="true"
+      className="pointer-events-none absolute z-20 rounded-full mix-blend-screen growy-bulb-core"
+      style={{
+        left: '28.3%',
+        top: '30.8%',
+        width: '12.5%',
+        aspectRatio: '1 / 1',
+        background:
+          'radial-gradient(circle, rgba(255, 255, 236, 0.95) 0%, rgba(255, 228, 122, 0.72) 50%, rgba(255, 228, 122, 0) 78%)',
+      }}
+    />
+    <span
+      aria-hidden="true"
+      className="pointer-events-none absolute z-20 rounded-full mix-blend-screen growy-bulb-halo"
+      style={{
+        left: '28.3%',
+        top: '31.2%',
+        width: '21%',
+        aspectRatio: '1 / 1',
+        background:
+          'radial-gradient(circle, rgba(255, 238, 153, 0.6) 0%, rgba(249, 206, 92, 0.28) 48%, rgba(249, 206, 92, 0) 76%)',
+        filter: 'blur(6px)',
+      }}
+    />
+  </div>
 );
 
 /** Doodle estilo mascota (contorno oscuro grueso y colores planos): ampolleta creativa */

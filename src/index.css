@@ -422,6 +422,38 @@ button:active:not(:disabled) {
   will-change: transform, opacity;
 }
 
+@keyframes growy-bulb-halo {
+  0%, 100% {
+    transform: translate(-50%, -50%) scale(0.92);
+    opacity: 0.58;
+  }
+  50% {
+    transform: translate(-50%, -50%) scale(1.2);
+    opacity: 0.96;
+  }
+}
+
+@keyframes growy-bulb-core {
+  0%, 100% {
+    transform: translate(-50%, -50%) scale(0.9);
+    opacity: 0.35;
+  }
+  50% {
+    transform: translate(-50%, -50%) scale(1.15);
+    opacity: 0.85;
+  }
+}
+
+.growy-bulb-halo {
+  animation: growy-bulb-halo 2.8s ease-in-out infinite;
+  will-change: transform, opacity;
+}
+
+.growy-bulb-core {
+  animation: growy-bulb-core 2.8s ease-in-out infinite;
+  will-change: transform, opacity;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
