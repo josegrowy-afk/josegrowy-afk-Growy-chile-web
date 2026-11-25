@@ -1,10 +1,25 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { Boxes, Check, ChevronDown, ChevronUp, Package, Pencil, Plus, Trash2, X } from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  AlertTriangle,
+  Boxes,
+  Check,
+  ChevronDown,
+  ChevronUp,
+  Clock,
+  HelpCircle,
+  Package,
+  Pencil,
+  Plus,
+  Trash2,
+  TrendingUp,
+  X,
+} from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   FIXED_COST_CATEGORY_LABELS,
   formatCurrency,
   formatMonthLabel,
+  formatNumber,
   formatPercent,
   getCurrentYearMonth,
   getProductContributionMargin,
@@ -13,6 +28,8 @@ import {
   getProductTotalVariableCost,
   getTotalFixedCostsForMonth,
 } from '../finance/formulas';
+import { calculateProductProfitabilityRanking } from '../finance/phase1Insights';
+import { calculateSuggestedProductPrice } from '../finance/phase2Insights';
 import { calculateInventorySummary } from '../finance/smeIntelligence';
 import type {
   BusinessWorkspace,
@@ -24,6 +41,12 @@ import type {
 import { GrowyDivider } from './GrowyMotifs';
 import { InventoryPanel } from './InventoryPanel';
 import { GROWY_EASE } from './MotionPrimitives';
+import {
+  FloatingSearchBar,
+  ProductProfitabilityDoughnut,
+  SectionTitle,
+  SolidCard,
+} from './design-system';
 
 interface SupplyCostDraftRow {
   id: string;
@@ -80,12 +103,62 @@ export const CatalogAndCostsView: React.FC<CatalogAndCostsViewProps> = ({
   const [prodTaxPct, setProdTaxPct] = useState('');
   const [prodShipping, setProdShipping] = useState('');
   const [prodPersonalTime, setProdPersonalTime] = useState('');
+  const [prodPersonalMinutes, setProdPersonalMinutes] = useState('');
+  const [targetMarginPctStr, setTargetMarginPctStr] = useState('45');
   const [prodError, setProdError] = useState<string | null>(null);
+  const [showParetoHelp, setShowParetoHelp] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [showLowMarginOnly, setShowLowMarginOnly] = useState(false);
+  const productFormRef = useRef<HTMLFormElement>(null);
+  const [themeKey, setThemeKey] = useState(() =>
+    typeof document !== 'undefined' ? document.documentElement.className : 'light'
+  );
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const obs = new MutationObserver(() => {
+      setThemeKey(document.documentElement.className);
+    });
+    obs.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+    return () => obs.disconnect();
+  }, []);
 
   const totalFixedNow = useMemo(
     () => getTotalFixedCostsForMonth(business.fixedCosts, currentMonth),
     [business.fixedCosts, currentMonth]
   );
+
+  const profitabilityRanking = useMemo(
+    () => calculateProductProfitabilityRanking(business, currentMonth),
+    [business, currentMonth]
+  );
+
+  const normalizedQuery = searchQuery.trim().toLowerCase();
+
+  const filteredFixedCosts = useMemo(() => {
+    if (!normalizedQuery) return business.fixedCosts;
+    return business.fixedCosts.filter((c) => {
+      const catLabel = FIXED_COST_CATEGORY_LABELS[c.category]?.toLowerCase() ?? '';
+      return (
+        c.name.toLowerCase().includes(normalizedQuery) ||
+        catLabel.includes(normalizedQuery) ||
+        (c.notes ?? '').toLowerCase().includes(normalizedQuery)
+      );
+    });
+  }, [business.fixedCosts, normalizedQuery]);
+
+  const filteredProducts = useMemo(() => {
+    return business.products.filter((p) => {
+      if (showLowMarginOnly && getProductMarginPercent(p) >= 25) {
+        return false;
+      }
+      if (!normalizedQuery) return true;
+      return (
+        p.name.toLowerCase().includes(normalizedQuery) ||
+        p.category.toLowerCase().includes(normalizedQuery)
+      );
+    });
+  }, [business.products, normalizedQuery, showLowMarginOnly]);
 
   // CRUD Costos fijos
   const resetCostForm = () => {
@@ -189,6 +262,7 @@ export const CatalogAndCostsView: React.FC<CatalogAndCostsViewProps> = ({
     setProdTaxPct('');
     setProdShipping('');
     setProdPersonalTime('');
+    setProdPersonalMinutes('');
     setProdError(null);
   };
 
@@ -215,6 +289,7 @@ export const CatalogAndCostsView: React.FC<CatalogAndCostsViewProps> = ({
     setProdTaxPct(p.taxPercent ? String(p.taxPercent) : '');
     setProdShipping(p.shippingCost ? String(p.shippingCost) : '');
     setProdPersonalTime(p.personalTimeCost ? String(p.personalTimeCost) : '');
+    setProdPersonalMinutes(p.personalTimeMinutes ? String(p.personalTimeMinutes) : '');
     setProdError(null);
   };
 
@@ -297,6 +372,28 @@ export const CatalogAndCostsView: React.FC<CatalogAndCostsViewProps> = ({
     prodPersonalTime,
   ]);
 
+  const suggestedPriceResult = useMemo(
+    () =>
+      calculateSuggestedProductPrice({
+        variableCost: effectiveBaseVarCost,
+        cardFeePercent: Math.max(0, Number(prodCardFeePct) || 0),
+        taxPercent: Math.max(0, Number(prodTaxPct) || 0),
+        shippingCost: Math.max(0, Number(prodShipping) || 0),
+        personalTimeCost: Math.max(0, Number(prodPersonalTime) || 0),
+        targetMarginPercent: Number(targetMarginPctStr),
+        decimals: business.currency.decimals,
+      }),
+    [
+      effectiveBaseVarCost,
+      prodCardFeePct,
+      prodTaxPct,
+      prodShipping,
+      prodPersonalTime,
+      targetMarginPctStr,
+      business.currency.decimals,
+    ]
+  );
+
   const handleSaveProduct = (e: React.FormEvent) => {
     e.preventDefault();
     const price = Number(prodPrice);
@@ -304,6 +401,8 @@ export const CatalogAndCostsView: React.FC<CatalogAndCostsViewProps> = ({
     const taxPercent = prodTaxPct === '' ? 0 : Number(prodTaxPct);
     const shippingCost = prodShipping === '' ? 0 : Number(prodShipping);
     const personalTimeCost = prodPersonalTime === '' ? 0 : Number(prodPersonalTime);
+    const personalTimeMinutes =
+      prodPersonalMinutes.trim() === '' ? undefined : Number(prodPersonalMinutes);
 
     let supplyCostItems: ProductSupplyCostItem[] | undefined;
     let varCost = prodVarCost === '' ? 0 : Number(prodVarCost);
@@ -365,6 +464,13 @@ export const CatalogAndCostsView: React.FC<CatalogAndCostsViewProps> = ({
       setProdError('El costo de tiempo personal involucrado no puede ser negativo.');
       return;
     }
+    if (
+      personalTimeMinutes !== undefined &&
+      (!Number.isFinite(personalTimeMinutes) || personalTimeMinutes < 0)
+    ) {
+      setProdError('Los minutos de dedicación por unidad deben ser 0 o mayor.');
+      return;
+    }
 
     const nextProd: ProductItem = {
       id: editingProductId ?? `prod-${Date.now()}`,
@@ -377,6 +483,10 @@ export const CatalogAndCostsView: React.FC<CatalogAndCostsViewProps> = ({
       taxPercent,
       shippingCost,
       personalTimeCost,
+      personalTimeMinutes:
+        personalTimeMinutes !== undefined && personalTimeMinutes > 0
+          ? personalTimeMinutes
+          : undefined,
     };
 
     const nextList = editingProductId
@@ -406,13 +516,22 @@ export const CatalogAndCostsView: React.FC<CatalogAndCostsViewProps> = ({
           role="tab"
           aria-selected={subTab === 'catalog'}
           onClick={() => setSubTab('catalog')}
+          style={
+            subTab === 'catalog'
+              ? { backgroundColor: 'var(--btn-navy-bg)', color: 'var(--btn-navy-text)' }
+              : undefined
+          }
           className={`min-h-[40px] px-4 py-1.5 rounded-full text-xs font-bold inline-flex items-center gap-2 transition-all cursor-pointer whitespace-nowrap shrink-0 ${
             subTab === 'catalog'
-              ? 'bg-[var(--bg-surface)] text-[var(--text-primary)] shadow-xs'
+              ? 'shadow-xs'
               : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
           }`}
         >
-          <Package className="w-4 h-4 text-[var(--accent-strong)]" />
+          <Package
+            className={`w-4 h-4 ${
+              subTab === 'catalog' ? '' : 'text-[var(--accent-strong)]'
+            }`}
+          />
           <span>Costos fijos y catálogo</span>
         </button>
 
@@ -421,13 +540,22 @@ export const CatalogAndCostsView: React.FC<CatalogAndCostsViewProps> = ({
           role="tab"
           aria-selected={subTab === 'inventory'}
           onClick={() => setSubTab('inventory')}
+          style={
+            subTab === 'inventory'
+              ? { backgroundColor: 'var(--btn-navy-bg)', color: 'var(--btn-navy-text)' }
+              : undefined
+          }
           className={`min-h-[40px] px-4 py-1.5 rounded-full text-xs font-bold inline-flex items-center gap-2 transition-all cursor-pointer whitespace-nowrap shrink-0 ${
             subTab === 'inventory'
-              ? 'bg-[var(--bg-surface)] text-[var(--text-primary)] shadow-xs'
+              ? 'shadow-xs'
               : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
           }`}
         >
-          <Boxes className="w-4 h-4 text-[var(--sec-text)]" />
+          <Boxes
+            className={`w-4 h-4 ${
+              subTab === 'inventory' ? '' : 'text-[var(--sec-text)]'
+            }`}
+          />
           <span>
             Inventario inteligente
             {invAlertsCount > 0 ? ` · ${invAlertsCount} alerta${invAlertsCount === 1 ? '' : 's'}` : ''}
@@ -439,44 +567,61 @@ export const CatalogAndCostsView: React.FC<CatalogAndCostsViewProps> = ({
         <InventoryPanel business={business} onUpdateBusiness={onUpdateBusiness} />
       ) : (
         <div className="space-y-8">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <FloatingSearchBar
+          value={searchQuery}
+          onChange={setSearchQuery}
+          placeholder="Buscar producto, categoría o costo fijo..."
+          label="Buscar en costos fijos y catálogo"
+          onFilterClick={() => setShowLowMarginOnly((v) => !v)}
+          filterActive={showLowMarginOnly}
+          filterLabel="Mostrar solo productos con margen bajo (<25%)"
+          onAddClick={() =>
+            productFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+          }
+          addLabel="Ir al formulario para agregar producto"
+        />
+        {(searchQuery.trim() !== '' || showLowMarginOnly) && (
+          <p className="text-xs font-semibold text-[var(--text-secondary)] shrink-0">
+            Mostrando {filteredProducts.length} prod. · {filteredFixedCosts.length} c. fijos
+            {showLowMarginOnly ? ' (margen <25%)' : ''}
+          </p>
+        )}
+      </div>
+
       {/* SECCIÓN 1: COSTOS FIJOS */}
       <section className="space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-2">
-          <div>
-            <p className="text-xs font-semibold text-[var(--text-secondary)]">
-              Estructura mensual constante
-            </p>
-            <h1 className="font-display text-2xl sm:text-3xl font-bold tracking-tight text-[var(--text-primary)] mt-1">
-              Costos{' '}
-              <em className="font-editorial italic font-semibold text-[var(--accent-strong)]">
-                fijos
-              </em>
-            </h1>
-          </div>
-          <div className="text-sm font-semibold">
-            <span className="text-[var(--text-secondary)]">Total mes actual: </span>
-            <span className="font-mono tabular-nums text-lg font-bold text-[var(--accent-strong)]">
-              {formatCurrency(totalFixedNow, business.currency)}
-            </span>
-          </div>
-        </div>
+        <SectionTitle
+          as="h1"
+          eyebrow="Estructura mensual constante"
+          title="Costos *fijos*"
+          rightSlot={
+            <div className="text-sm font-semibold">
+              <span className="text-[var(--text-secondary)]">Total mes actual: </span>
+              <span className="font-mono tabular-nums text-lg font-bold text-[var(--accent-strong)]">
+                {formatCurrency(totalFixedNow, business.currency)}
+              </span>
+            </div>
+          }
+        />
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          <form onSubmit={handleSaveCost} className="lg:col-span-5 boho-card p-6 space-y-4">
-            <div className="flex items-center justify-between">
-              <h2 className="font-display text-lg font-bold text-[var(--text-primary)]">
-                {editingCostId ? 'Editar costo fijo' : 'Agregar costo fijo'}
-              </h2>
-              {editingCostId && (
-                <button
-                  type="button"
-                  onClick={resetCostForm}
-                  className="text-xs font-semibold text-[var(--text-secondary)] hover:underline inline-flex items-center gap-1 cursor-pointer"
-                >
-                  <X className="w-3.5 h-3.5" /> Cancelar
-                </button>
-              )}
-            </div>
+          <SolidCard className="lg:col-span-5 p-6">
+            <form onSubmit={handleSaveCost} className="space-y-4">
+              <div className="flex items-center justify-between">
+                <h2 className="font-display text-lg font-bold text-[var(--text-primary)]">
+                  {editingCostId ? 'Editar costo fijo' : 'Agregar costo fijo'}
+                </h2>
+                {editingCostId && (
+                  <button
+                    type="button"
+                    onClick={resetCostForm}
+                    className="text-xs font-semibold text-[var(--text-secondary)] hover:underline inline-flex items-center gap-1 cursor-pointer"
+                  >
+                    <X className="w-3.5 h-3.5" /> Cancelar
+                  </button>
+                )}
+              </div>
 
             {costError && (
               <p className="text-xs font-semibold text-[var(--danger-text)] bg-[var(--danger-soft)] p-3 rounded-2xl">
@@ -576,24 +721,33 @@ export const CatalogAndCostsView: React.FC<CatalogAndCostsViewProps> = ({
 
             <button
               type="submit"
-              className="w-full min-h-[44px] inline-flex items-center justify-center gap-2 rounded-full bg-[var(--accent-btn)] hover:bg-[var(--accent-btn-hover)] text-[var(--accent-btn-text)] text-sm font-bold transition-colors cursor-pointer shadow-sm"
+              style={{
+                backgroundColor: 'var(--btn-navy-bg)',
+                color: 'var(--btn-navy-text)',
+              }}
+              className="w-full min-h-[44px] inline-flex items-center justify-center gap-2 rounded-full text-sm font-bold hover:opacity-92 transition-opacity cursor-pointer shadow-sm"
             >
               {editingCostId ? <Check className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
               <span>{editingCostId ? 'Guardar cambios' : 'Agregar costo fijo'}</span>
             </button>
-          </form>
+            </form>
+          </SolidCard>
 
-          <div className="lg:col-span-7 boho-card p-6">
+          <SolidCard className="lg:col-span-7 p-6">
             <h2 className="font-display text-lg font-bold text-[var(--text-primary)] mb-3">
-              Listado de costos fijos ({business.fixedCosts.length})
+              Listado de costos fijos ({filteredFixedCosts.length})
             </h2>
             {business.fixedCosts.length === 0 ? (
               <p className="text-sm text-[var(--text-secondary)] py-8 text-center">
                 Aún no registras costos fijos. Agrega arriendo, sueldos, servicios o software.
               </p>
+            ) : filteredFixedCosts.length === 0 ? (
+              <p className="text-sm text-[var(--text-secondary)] py-8 text-center">
+                No encontramos costos fijos que coincidan con "{searchQuery}".
+              </p>
             ) : (
               <div className="divide-y divide-[var(--border-hairline)]">
-                {business.fixedCosts.map((cost) => (
+                {filteredFixedCosts.map((cost) => (
                   <div
                     key={cost.id}
                     className="py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
@@ -647,7 +801,7 @@ export const CatalogAndCostsView: React.FC<CatalogAndCostsViewProps> = ({
                 ))}
               </div>
             )}
-          </div>
+          </SolidCard>
         </div>
       </section>
 
@@ -655,37 +809,29 @@ export const CatalogAndCostsView: React.FC<CatalogAndCostsViewProps> = ({
 
       {/* SECCIÓN 2: PRODUCTOS Y SERVICIOS */}
       <section className="space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
-          <div>
-            <p className="text-xs font-semibold text-[var(--text-secondary)]">
-              Precios y costos variables por unidad
-            </p>
-            <h2 className="font-display text-2xl sm:text-3xl font-bold tracking-tight text-[var(--text-primary)] mt-1">
-              Catálogo de{' '}
-              <em className="font-editorial italic font-semibold text-[var(--accent-strong)]">
-                productos
-              </em>{' '}
-              y servicios
-            </h2>
-          </div>
-        </div>
+        <SectionTitle
+          as="h2"
+          eyebrow="Precios y costos variables por unidad"
+          title="Catálogo de *productos* y servicios"
+        />
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          <form onSubmit={handleSaveProduct} className="lg:col-span-5 boho-card p-6 space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="font-display text-lg font-bold text-[var(--text-primary)]">
-                {editingProductId ? 'Editar producto / servicio' : 'Agregar producto o servicio'}
-              </h3>
-              {editingProductId && (
-                <button
-                  type="button"
-                  onClick={resetProdForm}
-                  className="text-xs font-semibold text-[var(--text-secondary)] hover:underline inline-flex items-center gap-1 cursor-pointer"
-                >
-                  <X className="w-3.5 h-3.5" /> Cancelar
-                </button>
-              )}
-            </div>
+          <SolidCard className="lg:col-span-5 p-6">
+            <form ref={productFormRef} onSubmit={handleSaveProduct} className="space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="font-display text-lg font-bold text-[var(--text-primary)]">
+                  {editingProductId ? 'Editar producto / servicio' : 'Agregar producto o servicio'}
+                </h3>
+                {editingProductId && (
+                  <button
+                    type="button"
+                    onClick={resetProdForm}
+                    className="text-xs font-semibold text-[var(--text-secondary)] hover:underline inline-flex items-center gap-1 cursor-pointer"
+                  >
+                    <X className="w-3.5 h-3.5" /> Cancelar
+                  </button>
+                )}
+              </div>
 
             {prodError && (
               <p className="text-xs font-semibold text-[var(--danger-text)] bg-[var(--danger-soft)] p-3 rounded-2xl">
@@ -930,6 +1076,24 @@ export const CatalogAndCostsView: React.FC<CatalogAndCostsViewProps> = ({
                     className="boho-input w-full font-mono tabular-nums"
                   />
                 </div>
+
+                <div className="sm:col-span-2">
+                  <label className="block text-xs font-semibold mb-1">
+                    Minutos de tu tiempo por unidad (para calcular margen por hora)
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    step="any"
+                    placeholder="Ej. 30 (opcional, en minutos)"
+                    value={prodPersonalMinutes}
+                    onChange={(e) => setProdPersonalMinutes(e.target.value)}
+                    className="boho-input w-full font-mono tabular-nums"
+                  />
+                  <span className="block text-[11px] text-[var(--text-secondary)] mt-0.5">
+                    Si ingresas los minutos que dedicas por unidad, veremos cuánta ganancia libre te deja cada hora trabajada en este producto.
+                  </span>
+                </div>
               </div>
             </div>
 
@@ -960,22 +1124,85 @@ export const CatalogAndCostsView: React.FC<CatalogAndCostsViewProps> = ({
               </div>
             )}
 
+            {/* 2.6 Precio sugerido según margen objetivo */}
+            <div className="p-3.5 rounded-2xl bg-[var(--sec-soft)] border border-[var(--sec-border)] space-y-2.5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-xs font-bold text-[var(--text-primary)]">
+                  ¿Qué precio cobrar? (según margen deseado)
+                </span>
+                <div className="flex items-center gap-1.5">
+                  <label
+                    htmlFor="target-margin-helper-input"
+                    className="text-[11px] font-semibold text-[var(--text-secondary)]"
+                  >
+                    Margen %
+                  </label>
+                  <input
+                    id="target-margin-helper-input"
+                    type="number"
+                    min={0}
+                    max={95}
+                    step={1}
+                    value={targetMarginPctStr}
+                    onChange={(e) => setTargetMarginPctStr(e.target.value)}
+                    className="boho-input w-20 py-1 text-xs font-mono tabular-nums text-right"
+                  />
+                </div>
+              </div>
+
+              {suggestedPriceResult.isValid ? (
+                <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                  <div>
+                    <span className="text-[var(--text-secondary)]">Precio sugerido: </span>
+                    <strong className="font-mono tabular-nums text-sm text-[var(--sec-text)]">
+                      {formatCurrency(suggestedPriceResult.suggestedPrice, business.currency)}
+                    </strong>
+                    <span className="block text-[11px] text-[var(--text-secondary)]">
+                      Deja aprox.{' '}
+                      {formatCurrency(suggestedPriceResult.projectedUnitMargin, business.currency)}{' '}
+                      libres por unidad ({suggestedPriceResult.targetMarginPercent}%).
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setProdPrice(String(suggestedPriceResult.suggestedPrice))}
+                    className="min-h-[34px] px-3.5 rounded-full bg-[var(--bg-surface)] border border-[var(--sec-border)] text-xs font-bold text-[var(--sec-text)] hover:bg-[var(--bg-soft)] cursor-pointer shrink-0"
+                  >
+                    Usar este precio
+                  </button>
+                </div>
+              ) : (
+                <p className="text-[11px] text-[var(--danger-text)] font-medium">
+                  {suggestedPriceResult.errorMessage}
+                </p>
+              )}
+            </div>
+
             <button
               type="submit"
-              className="w-full min-h-[44px] inline-flex items-center justify-center gap-2 rounded-full bg-[var(--accent-btn)] hover:bg-[var(--accent-btn-hover)] text-[var(--accent-btn-text)] text-sm font-bold transition-colors cursor-pointer shadow-sm"
+              style={{
+                backgroundColor: 'var(--btn-navy-bg)',
+                color: 'var(--btn-navy-text)',
+              }}
+              className="w-full min-h-[44px] inline-flex items-center justify-center gap-2 rounded-full text-sm font-bold hover:opacity-92 transition-opacity cursor-pointer shadow-sm"
             >
               {editingProductId ? <Check className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
               <span>{editingProductId ? 'Guardar producto' : 'Agregar al catálogo'}</span>
             </button>
-          </form>
+            </form>
+          </SolidCard>
 
-          <div className="lg:col-span-7 boho-card p-6">
+          <SolidCard className="lg:col-span-7 p-6">
             <h3 className="font-display text-lg font-bold text-[var(--text-primary)] mb-3">
-              Productos y servicios ({business.products.length})
+              Productos y servicios ({filteredProducts.length})
             </h3>
             {business.products.length === 0 ? (
               <p className="text-sm text-[var(--text-secondary)] py-8 text-center">
                 Aún no tienes productos en tu catálogo. Agrega al menos uno para comenzar a calcular.
+              </p>
+            ) : filteredProducts.length === 0 ? (
+              <p className="text-sm text-[var(--text-secondary)] py-8 text-center">
+                Ningún producto coincide con el filtro actual.
               </p>
             ) : (
               <div className="overflow-x-auto">
@@ -990,7 +1217,7 @@ export const CatalogAndCostsView: React.FC<CatalogAndCostsViewProps> = ({
                     </tr>
                   </thead>
                   <tbody>
-                    {business.products.map((p) => {
+                    {filteredProducts.map((p) => {
                       const breakdown = getProductCostBreakdown(p);
                       const totalVarCost = getProductTotalVariableCost(p);
                       const mc = getProductContributionMargin(p);
@@ -1085,9 +1312,186 @@ export const CatalogAndCostsView: React.FC<CatalogAndCostsViewProps> = ({
                 </table>
               </div>
             )}
-          </div>
+          </SolidCard>
         </div>
       </section>
+
+      {/* SECCIÓN 3: RENTABILIDAD POR PRODUCTO, PARETO 80/20 Y MARGEN POR HORA */}
+      {business.products.length > 0 && (
+        <SolidCard as="section" className="p-6 space-y-5">
+          <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <TrendingUp className="w-4 h-4 text-[var(--pos-text)] shrink-0" />
+                <SectionTitle
+                  as="h2"
+                  size="sm"
+                  title="Rentabilidad por *producto* · Pareto 80/20"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowParetoHelp((prev) => !prev)}
+                  aria-label="¿Cómo se lee la vista Pareto 80/20?"
+                  aria-expanded={showParetoHelp}
+                  className="text-[var(--sec-text)] hover:opacity-80 cursor-pointer"
+                >
+                  <HelpCircle className="w-4 h-4" />
+                </button>
+              </div>
+              <p className="text-xs text-[var(--text-secondary)]">
+                Ordenados por margen total del mes (
+                {profitabilityRanking.volumeSourceUsed === 'actual'
+                  ? 'según unidades reales vendidas en el mes'
+                  : profitabilityRanking.volumeSourceUsed === 'mixed'
+                    ? 'mezcla de ventas reales y proyección base'
+                    : 'según volumen mensual proyectado'}
+                ).
+              </p>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[var(--pos-soft)] border border-[var(--pos-border)] font-semibold text-[var(--pos-text)]">
+                Pareto 80/20: {profitabilityRanking.paretoCoreCount}{' '}
+                {profitabilityRanking.paretoCoreCount === 1 ? 'producto clave' : 'productos clave'}
+              </span>
+              {profitabilityRanking.highVolumeLowMarginCount > 0 && (
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[var(--warn-soft)] border border-[var(--warn-border)] font-semibold text-[var(--warn-text)]">
+                  <AlertTriangle className="w-3.5 h-3.5" />
+                  <span>
+                    {profitabilityRanking.highVolumeLowMarginCount} vende harto y deja poco
+                  </span>
+                </span>
+              )}
+            </div>
+          </div>
+
+          {showParetoHelp && (
+            <div className="p-4 rounded-2xl bg-[var(--sec-soft)] border border-[var(--sec-border)] text-xs text-[var(--text-primary)] leading-relaxed space-y-1">
+              <p>
+                <strong>Vista Pareto 80/20:</strong> muestra qué productos generan cerca del 80% de tu ganancia libre total para que cuides su stock y tiempo.
+              </p>
+              <p>
+                <strong>Vende harto pero deja poco:</strong> marca productos con muchas unidades vendidas, pero cuyo margen porcentual es bajo (&lt;25% o menos de la mitad del promedio de tu catálogo).
+              </p>
+            </div>
+          )}
+
+          <ProductProfitabilityDoughnut
+            title="Aporte al margen por producto"
+            items={profitabilityRanking.rows
+              .filter((r) => r.totalMargin > 0)
+              .slice(0, 8)
+              .map((r) => ({ name: r.productName, amount: Math.round(r.totalMargin) }))}
+            themeKey={themeKey}
+          />
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm text-left border-collapse min-w-[740px]">
+              <thead>
+                <tr className="border-b border-[var(--border-hairline)] text-xs text-[var(--text-secondary)]">
+                  <th className="py-2.5 pr-3 font-semibold"># · Producto</th>
+                  <th className="py-2.5 px-2 font-semibold text-right">Volumen/mes</th>
+                  <th className="py-2.5 px-2 font-semibold text-right">Margen unit.</th>
+                  <th className="py-2.5 px-2 font-semibold text-right">Margen total</th>
+                  <th className="py-2.5 px-2 font-semibold text-right">Aporte / Pareto</th>
+                  <th className="py-2.5 pl-2 font-semibold text-right">Margen / hora</th>
+                </tr>
+              </thead>
+              <tbody>
+                {profitabilityRanking.rows.map((row) => (
+                  <tr
+                    key={row.productId}
+                    className={`border-b border-[var(--border-hairline)] last:border-0 ${
+                      row.isHighVolumeLowMargin ? 'bg-[var(--warn-soft)]/45' : ''
+                    }`}
+                  >
+                    <td className="py-3 pr-3">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-mono text-xs font-bold text-[var(--text-secondary)]">
+                          #{row.rank}
+                        </span>
+                        <span className="font-semibold text-[var(--text-primary)]">
+                          {row.productName}
+                        </span>
+                        {row.isParetoTop80 && (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-[var(--pos-soft)] border border-[var(--pos-border)] text-[10px] font-bold text-[var(--pos-text)]">
+                            Núcleo 80/20
+                          </span>
+                        )}
+                        {row.isHighVolumeLowMargin && (
+                          <span
+                            title={row.highVolumeLowMarginReason ?? undefined}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[var(--warn-soft)] border border-[var(--warn-border)] text-[10px] font-bold text-[var(--warn-text)]"
+                          >
+                            <AlertTriangle className="w-3 h-3 shrink-0" />
+                            <span>Vende harto, deja poco</span>
+                          </span>
+                        )}
+                      </div>
+                      {row.highVolumeLowMarginReason && (
+                        <p className="text-[11px] text-[var(--warn-text)] mt-1">
+                          {row.highVolumeLowMarginReason}
+                        </p>
+                      )}
+                    </td>
+                    <td className="py-3 px-2 text-right font-mono tabular-nums">
+                      {formatNumber(row.units)} u.
+                      <span className="block text-[10px] font-sans text-[var(--text-secondary)]">
+                        {row.volumeSource === 'actual' ? 'Real' : 'Proyectado'}
+                      </span>
+                    </td>
+                    <td className="py-3 px-2 text-right font-mono tabular-nums">
+                      {formatCurrency(row.unitContributionMargin, business.currency)}
+                      <span className="block text-[11px] text-[var(--text-secondary)]">
+                        {formatPercent(row.contributionMarginPercent)}
+                      </span>
+                    </td>
+                    <td
+                      className={`py-3 px-2 text-right font-mono tabular-nums font-bold ${
+                        row.totalMargin >= 0 ? 'text-[var(--pos-text)]' : 'text-[var(--danger-text)]'
+                      }`}
+                    >
+                      {formatCurrency(row.totalMargin, business.currency)}
+                    </td>
+                    <td className="py-3 px-2 text-right font-mono tabular-nums">
+                      <span className="font-semibold text-[var(--text-primary)]">
+                        {row.profitSharePercent.toFixed(1)}%
+                      </span>
+                      <span className="block text-[10px] text-[var(--text-secondary)]">
+                        Acum. {row.cumulativeProfitSharePercent.toFixed(0)}%
+                      </span>
+                    </td>
+                    <td className="py-3 pl-2 text-right font-mono tabular-nums">
+                      {row.marginPerHour !== null ? (
+                        <div>
+                          <span className="font-bold text-[var(--sec-text)]">
+                            {formatCurrency(row.marginPerHour, business.currency)}/h
+                          </span>
+                          <span className="block text-[10px] font-sans text-[var(--text-secondary)]">
+                            {row.personalTimeMinutes} min/u
+                          </span>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const target = business.products.find((p) => p.id === row.productId);
+                            if (target) startEditProduct(target);
+                          }}
+                          className="inline-flex items-center gap-1 text-[11px] font-sans font-semibold text-[var(--sec-text)] hover:underline cursor-pointer"
+                        >
+                          <Clock className="w-3 h-3" />
+                          <span>Agregar min/u</span>
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </SolidCard>
+      )}
         </div>
       )}
     </div>

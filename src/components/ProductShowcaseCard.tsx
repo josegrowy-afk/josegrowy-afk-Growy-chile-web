@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import { ArrowRight, Check, Laptop, ShieldCheck, Smartphone } from 'lucide-react';
+import { GlassCard } from './design-system/GlassCard';
+import { EditorialText } from './design-system/SectionTitle';
 import { EquilibrioProductIcon } from './GrowyMotifs';
 
 export interface ProductShowcaseCardProps {
@@ -15,7 +17,11 @@ export interface ProductShowcaseCardProps {
   annualPriceNote?: string;
   annualCtaLabel?: string;
   annualPaymentUrl?: string;
+  annualBadgeLabel?: string;
+  priceComparisonText?: string;
+  refundGuaranteeText?: string;
   trustNote: string;
+  onPaymentCtaClick?: (planType: 'monthly' | 'annual') => void;
   secondaryAction?: {
     label: string;
     onClick: () => void;
@@ -38,7 +44,11 @@ export const ProductShowcaseCard: React.FC<ProductShowcaseCardProps> = ({
   annualPriceNote,
   annualCtaLabel,
   annualPaymentUrl,
+  annualBadgeLabel,
+  priceComparisonText,
+  refundGuaranteeText,
   trustNote,
+  onPaymentCtaClick,
   secondaryAction,
   iconSrc,
   mockupSlot,
@@ -52,7 +62,11 @@ export const ProductShowcaseCard: React.FC<ProductShowcaseCardProps> = ({
     (resolvedAnnualUrl.startsWith('http://') || resolvedAnnualUrl.startsWith('https://'));
 
   return (
-    <article className="boho-card rounded-[32px] p-6 sm:p-10 grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-10 items-center border-2 border-[var(--sec-border)]">
+    <GlassCard
+      as="article"
+      radius="lg"
+      className="p-6 sm:p-10 grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-10 items-center"
+    >
       {/* Columna izquierda: información del producto, beneficios y compra */}
       <div className="lg:col-span-6 space-y-6">
         <div className="space-y-3">
@@ -69,9 +83,11 @@ export const ProductShowcaseCard: React.FC<ProductShowcaseCardProps> = ({
               </div>
             )}
             <div>
-              <p className="text-xs font-semibold text-[var(--sec-text)]">{eyebrow}</p>
-              <h2 className="font-display text-3xl sm:text-4xl font-bold text-[var(--text-primary)] tracking-tight">
-                {title}
+              <p className="text-xs font-bold tracking-[0.06em] uppercase text-[var(--sec-text)]">
+                {eyebrow}
+              </p>
+              <h2 className="font-display text-3xl sm:text-4xl font-extrabold text-[var(--text-primary)] tracking-tight">
+                <EditorialText text={`*${title}*`} />
               </h2>
             </div>
           </div>
@@ -90,18 +106,18 @@ export const ProductShowcaseCard: React.FC<ProductShowcaseCardProps> = ({
           ))}
         </ul>
 
-        {/* Bloque de planes (Mensual $5.990/mes y Anual $50.000/año) + CTA */}
-        <div
-          className="p-5 sm:p-6 rounded-[24px] border border-[var(--sec-border)] space-y-4"
-          style={{
-            background:
-              'linear-gradient(145deg, var(--bg-soft-alt) 0%, var(--sec-soft) 100%)',
-          }}
-        >
+        {/* Bloque de planes (Mensual y Anual dinámicos desde appConfig) + CTA */}
+        <div className="p-5 sm:p-6 rounded-[28px] bg-[var(--bg-surface)] border border-[var(--border-hairline)] space-y-4">
+          {priceComparisonText && (
+            <p className="text-xs font-semibold text-[var(--text-primary)] bg-[var(--bg-soft-alt)] border border-[var(--border-hairline)] rounded-2xl px-4 py-2.5 leading-relaxed">
+              {priceComparisonText}
+            </p>
+          )}
+
           {annualPriceLabel ? (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
               {/* Plan Mensual */}
-              <div className="p-4 rounded-2xl bg-[var(--bg-surface)] border border-[var(--border-hairline)] flex flex-col justify-between gap-3">
+              <div className="p-4 rounded-[24px] bg-[var(--bg-soft-alt)] border border-[var(--border-hairline)] flex flex-col justify-between gap-3.5">
                 <div>
                   <p className="text-[11px] font-bold uppercase tracking-wide text-[var(--sec-text)]">
                     Plan Mensual
@@ -117,19 +133,33 @@ export const ProductShowcaseCard: React.FC<ProductShowcaseCardProps> = ({
                   href={hasExternalUrl ? paymentUrl : '#contacto'}
                   target={hasExternalUrl ? '_blank' : undefined}
                   rel={hasExternalUrl ? 'noopener noreferrer' : undefined}
-                  className="inline-flex items-center justify-center gap-1.5 min-h-[44px] px-4 py-2.5 rounded-full bg-[var(--accent-btn)] hover:bg-[var(--accent-btn-hover)] text-[var(--accent-btn-text)] text-xs font-bold transition-colors whitespace-nowrap shadow-sm"
+                  onClick={() => onPaymentCtaClick?.('monthly')}
+                  className="inline-flex items-center justify-center gap-1.5 min-h-[44px] px-4 py-2.5 rounded-full border border-[var(--border-hairline)] bg-[var(--bg-surface)] hover:bg-[var(--sec-soft)] text-[var(--text-primary)] text-xs font-bold transition-colors whitespace-nowrap"
                 >
                   <span>{ctaLabel}</span>
                   <ArrowRight className="w-3.5 h-3.5" />
                 </a>
               </div>
 
-              {/* Plan Anual */}
-              <div className="p-4 rounded-2xl bg-[var(--pos-soft)] border border-[var(--pos-border)] flex flex-col justify-between gap-3">
+              {/* Plan Anual (destacado con etiqueta coral) */}
+              <div className="p-4 rounded-[24px] bg-[var(--pos-soft)] border-2 border-[var(--pos-border)] flex flex-col justify-between gap-3.5">
                 <div>
-                  <p className="text-[11px] font-bold uppercase tracking-wide text-[var(--pos-text)]">
-                    Plan Anual · 12 meses
-                  </p>
+                  <div className="flex flex-wrap items-center justify-between gap-1.5">
+                    <p className="text-[11px] font-bold uppercase tracking-wide text-[var(--pos-text)]">
+                      Plan Anual · 12 meses
+                    </p>
+                    {annualBadgeLabel && (
+                      <span
+                        className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-extrabold whitespace-nowrap"
+                        style={{
+                          backgroundColor: 'var(--accent-coral)',
+                          color: 'var(--navy-ink)',
+                        }}
+                      >
+                        {annualBadgeLabel}
+                      </span>
+                    )}
+                  </div>
                   <p className="font-mono tabular-nums text-2xl font-bold text-[var(--text-primary)] mt-1">
                     {annualPriceLabel}
                   </p>
@@ -141,7 +171,12 @@ export const ProductShowcaseCard: React.FC<ProductShowcaseCardProps> = ({
                   href={hasAnnualExternalUrl ? resolvedAnnualUrl : '#contacto'}
                   target={hasAnnualExternalUrl ? '_blank' : undefined}
                   rel={hasAnnualExternalUrl ? 'noopener noreferrer' : undefined}
-                  className="inline-flex items-center justify-center gap-1.5 min-h-[44px] px-4 py-2.5 rounded-full bg-[var(--text-primary)] hover:opacity-90 text-[var(--bg-surface)] text-xs font-bold transition-opacity whitespace-nowrap shadow-sm"
+                  onClick={() => onPaymentCtaClick?.('annual')}
+                  style={{
+                    backgroundColor: 'var(--btn-navy-bg)',
+                    color: 'var(--btn-navy-text)',
+                  }}
+                  className="inline-flex items-center justify-center gap-1.5 min-h-[44px] px-4 py-2.5 rounded-full hover:opacity-92 text-xs font-bold transition-opacity whitespace-nowrap shadow-xs"
                 >
                   <span>{annualCtaLabel || `Elegir ${annualPriceLabel}`}</span>
                   <ArrowRight className="w-3.5 h-3.5" />
@@ -170,7 +205,12 @@ export const ProductShowcaseCard: React.FC<ProductShowcaseCardProps> = ({
                 href={hasExternalUrl ? paymentUrl : '#contacto'}
                 target={hasExternalUrl ? '_blank' : undefined}
                 rel={hasExternalUrl ? 'noopener noreferrer' : undefined}
-                className="inline-flex items-center justify-center gap-2 min-h-[48px] px-7 py-3 rounded-full bg-[var(--accent-btn)] hover:bg-[var(--accent-btn-hover)] text-[var(--accent-btn-text)] text-sm font-bold transition-colors whitespace-nowrap shadow-sm"
+                onClick={() => onPaymentCtaClick?.('monthly')}
+                style={{
+                  backgroundColor: 'var(--btn-navy-bg)',
+                  color: 'var(--btn-navy-text)',
+                }}
+                className="inline-flex items-center justify-center gap-2 min-h-[48px] px-7 py-3 rounded-full hover:opacity-92 text-sm font-bold transition-opacity whitespace-nowrap shadow-xs"
               >
                 <span>{ctaLabel}</span>
                 <ArrowRight className="w-4 h-4" />
@@ -185,10 +225,17 @@ export const ProductShowcaseCard: React.FC<ProductShowcaseCardProps> = ({
                 type="button"
                 onClick={secondaryAction.onClick}
                 disabled={secondaryAction.disabled}
-                className="inline-flex items-center justify-center min-h-[42px] px-5 py-2.5 rounded-full border border-[var(--sec-border)] bg-[var(--bg-surface)] hover:bg-[var(--sec-soft)] text-xs font-semibold text-[var(--text-primary)] transition-colors whitespace-nowrap cursor-pointer disabled:opacity-60"
+                className="inline-flex items-center justify-center min-h-[42px] px-5 py-2.5 rounded-full border border-[var(--sec-border)] bg-[var(--bg-soft-alt)] hover:bg-[var(--sec-soft)] text-xs font-semibold text-[var(--text-primary)] transition-colors whitespace-nowrap cursor-pointer disabled:opacity-60"
               >
                 {secondaryAction.label}
               </button>
+            </div>
+          )}
+
+          {refundGuaranteeText && (
+            <div className="flex items-start gap-2.5 p-3.5 rounded-2xl bg-[var(--pos-soft)] border border-[var(--pos-border)] text-xs text-[var(--text-primary)] leading-relaxed">
+              <ShieldCheck className="w-4 h-4 text-[var(--pos-text)] shrink-0 mt-0.5" />
+              <p className="font-medium">{refundGuaranteeText}</p>
             </div>
           )}
 
@@ -201,7 +248,7 @@ export const ProductShowcaseCard: React.FC<ProductShowcaseCardProps> = ({
 
       {/* Columna derecha: capturas / mockups */}
       <div className="lg:col-span-6">{mockupSlot}</div>
-    </article>
+    </GlassCard>
   );
 };
 
@@ -209,14 +256,14 @@ export const EquilibrioProductMockup: React.FC = () => {
   const [view, setView] = useState<'equilibrio' | 'proyeccion' | 'dispositivos'>('equilibrio');
 
   return (
-    <div className="rounded-3xl border border-[var(--border-hairline)] bg-[var(--bg-soft-alt)] p-4 sm:p-6 space-y-4">
+    <div className="rounded-[28px] border border-[var(--border-hairline)] bg-[var(--bg-soft-alt)] p-4 sm:p-6 space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <span className="inline-flex items-center gap-2 text-xs font-medium text-[var(--text-secondary)]">
           <EquilibrioProductIcon size="xs" />
           <span>Vista previa del panel · Equilibrio</span>
         </span>
 
-        <div className="inline-flex items-center gap-1 p-1 rounded-xl bg-[var(--bg-surface)] border border-[var(--border-hairline)] text-xs">
+        <div className="inline-flex items-center gap-1 p-1 rounded-full bg-[var(--bg-surface)] border border-[var(--border-hairline)] text-xs">
           {(
             [
               { id: 'equilibrio', label: 'Equilibrio' },
@@ -228,9 +275,9 @@ export const EquilibrioProductMockup: React.FC = () => {
               key={tab.id}
               type="button"
               onClick={() => setView(tab.id)}
-              className={`px-3 py-1.5 rounded-lg font-medium transition-colors cursor-pointer ${
+              className={`px-3.5 py-1.5 rounded-full font-medium transition-colors cursor-pointer ${
                 view === tab.id
-                  ? 'bg-[var(--pos-soft)] text-[var(--pos-text)] font-semibold'
+                  ? 'bg-[var(--btn-navy-bg)] text-[var(--btn-navy-text)] font-semibold'
                   : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
               }`}
             >
@@ -241,12 +288,12 @@ export const EquilibrioProductMockup: React.FC = () => {
       </div>
 
       {view === 'equilibrio' && (
-        <div className="rounded-2xl bg-[var(--bg-surface)] border border-[var(--border-hairline)] p-5 space-y-4">
+        <div className="rounded-[24px] bg-[var(--bg-surface)] border border-[var(--border-hairline)] p-5 space-y-4">
           <div className="flex items-center justify-between gap-3 border-b border-[var(--border-hairline)] pb-3">
             <div>
               <p className="text-xs text-[var(--text-secondary)]">Resumen mensual</p>
-              <p className="font-display text-lg font-semibold text-[var(--text-primary)]">
-                Tu base de tranquilidad
+              <p className="font-display text-lg font-extrabold text-[var(--text-primary)]">
+                Tu base de <em className="growy-editorial-phrase">tranquilidad</em>
               </p>
             </div>
             <p className="font-mono tabular-nums text-xs font-semibold text-[var(--pos-text)]">
@@ -255,7 +302,7 @@ export const EquilibrioProductMockup: React.FC = () => {
           </div>
 
           <div className="grid grid-cols-2 gap-3">
-            <div className="p-3.5 rounded-xl bg-[var(--bg-soft-alt)] border border-[var(--border-hairline)]">
+            <div className="p-3.5 rounded-2xl bg-[var(--bg-soft-alt)] border border-[var(--border-hairline)]">
               <p className="text-[11px] text-[var(--text-secondary)]">Punto de equilibrio</p>
               <p className="font-mono tabular-nums text-xl font-bold text-[var(--text-primary)] mt-1">
                 50 unidades
@@ -264,13 +311,13 @@ export const EquilibrioProductMockup: React.FC = () => {
                 Cubres el 100% de tus costos
               </p>
             </div>
-            <div className="p-3.5 rounded-xl bg-[var(--sec-soft)] border border-[var(--sec-border)]">
+            <div className="p-3.5 rounded-2xl bg-[var(--sec-soft)] border border-[var(--sec-border)]">
               <p className="text-[11px] text-[var(--sec-text)]">Para tu meta de ganancia</p>
               <p className="font-mono tabular-nums text-xl font-bold text-[var(--text-primary)] mt-1">
                 84 unidades
               </p>
               <p className="text-[11px] text-[var(--sec-text)] mt-0.5">
-                Meta: +$204.000 libres al mes
+                Meta: <span className="font-mono">+$204.000</span> libres al mes
               </p>
             </div>
           </div>
@@ -295,12 +342,12 @@ export const EquilibrioProductMockup: React.FC = () => {
       )}
 
       {view === 'proyeccion' && (
-        <div className="rounded-2xl bg-[var(--bg-surface)] border border-[var(--border-hairline)] p-5 space-y-4">
+        <div className="rounded-[24px] bg-[var(--bg-surface)] border border-[var(--border-hairline)] p-5 space-y-4">
           <div className="flex items-center justify-between gap-2 border-b border-[var(--border-hairline)] pb-3">
             <div>
               <p className="text-xs text-[var(--text-secondary)]">Proyección mes a mes</p>
-              <p className="font-display text-lg font-semibold text-[var(--text-primary)]">
-                Lo proyectado frente a lo real
+              <p className="font-display text-lg font-extrabold text-[var(--text-primary)]">
+                Lo proyectado <em className="growy-editorial-phrase">frente</em> a lo real
               </p>
             </div>
             <span className="font-mono text-xs text-[var(--sec-text)]">CLP</span>
@@ -314,7 +361,7 @@ export const EquilibrioProductMockup: React.FC = () => {
             ].map((row) => (
               <div
                 key={row.mes}
-                className="grid grid-cols-4 items-center gap-2 p-2.5 rounded-xl bg-[var(--bg-soft-alt)] border border-[var(--border-hairline)]"
+                className="grid grid-cols-4 items-center gap-2 p-2.5 rounded-2xl bg-[var(--bg-soft-alt)] border border-[var(--border-hairline)]"
               >
                 <span className="font-medium text-[var(--text-primary)]">{row.mes}</span>
                 <span className="font-mono tabular-nums text-[var(--text-secondary)]">
@@ -340,20 +387,20 @@ export const EquilibrioProductMockup: React.FC = () => {
       )}
 
       {view === 'dispositivos' && (
-        <div className="rounded-2xl bg-[var(--bg-surface)] border border-[var(--border-hairline)] p-5 space-y-4">
+        <div className="rounded-[24px] bg-[var(--bg-surface)] border border-[var(--border-hairline)] p-5 space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div className="p-4 rounded-xl bg-[var(--pos-soft)] border border-[var(--pos-border)] space-y-2">
+            <div className="p-4 rounded-2xl bg-[var(--pos-soft)] border border-[var(--pos-border)] space-y-2">
               <Laptop className="w-5 h-5 text-[var(--pos-text)]" />
-              <p className="font-display text-base font-semibold text-[var(--text-primary)]">
+              <p className="font-display text-base font-bold text-[var(--text-primary)]">
                 Computador
               </p>
               <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
                 Trabaja cómodo desde tu navegador o instálala como aplicación de escritorio con respaldo en la nube.
               </p>
             </div>
-            <div className="p-4 rounded-xl bg-[var(--sec-soft)] border border-[var(--sec-border)] space-y-2">
+            <div className="p-4 rounded-2xl bg-[var(--sec-soft)] border border-[var(--sec-border)] space-y-2">
               <Smartphone className="w-5 h-5 text-[var(--sec-text)]" />
-              <p className="font-display text-base font-semibold text-[var(--text-primary)]">
+              <p className="font-display text-base font-bold text-[var(--text-primary)]">
                 Celular
               </p>
               <p className="text-xs text-[var(--text-secondary)] leading-relaxed">

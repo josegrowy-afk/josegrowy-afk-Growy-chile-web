@@ -8,7 +8,7 @@
     "build": "vite build",
     "start": "NODE_ENV=production tsx server.ts",
     "preview": "vite preview",
-    "test:formulas": "tsx --test src/finance/formulas.test.ts",
+    "test:formulas": "tsx --test src/finance/*.test.ts",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit"
   },

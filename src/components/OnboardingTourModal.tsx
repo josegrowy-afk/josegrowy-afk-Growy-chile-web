@@ -288,7 +288,7 @@ export const OnboardingTourModal: React.FC<OnboardingTourModalProps> = ({
               width: `${targetBox.width}px`,
               height: `${targetBox.height}px`,
               boxShadow: '0 0 0 9999px rgba(18, 17, 24, 0.62)',
-              border: '2px solid var(--accent-btn)',
+              border: '2px solid #F6A59E',
             }}
           />
         ) : (
@@ -309,11 +309,11 @@ export const OnboardingTourModal: React.FC<OnboardingTourModalProps> = ({
           exit={{ opacity: 0, y: 8, scale: 0.98 }}
           transition={{ duration: 0.22, ease: GROWY_EASE }}
           style={cardStyle}
-          className="fixed z-[75] boho-card p-5 sm:p-6 shadow-2xl border border-[var(--border-hairline)] space-y-4 max-h-[82vh] overflow-y-auto"
+          className="fixed z-[75] growy-solid p-5 sm:p-6 shadow-2xl border border-[var(--border-hairline)] space-y-4 max-h-[82vh] overflow-y-auto"
         >
           <div className="flex items-start justify-between gap-3">
             <div className="flex items-center gap-3 min-w-0">
-              <div className="w-10 h-10 rounded-2xl growy-hero-surface flex items-center justify-center shrink-0">
+              <div className="w-10 h-10 rounded-2xl growy-banner-surface flex items-center justify-center shrink-0">
                 {isFirst ? <EquilibrioProductIcon size="xs" /> : currentStep.icon}
               </div>
               <div className="min-w-0">
@@ -366,7 +366,7 @@ export const OnboardingTourModal: React.FC<OnboardingTourModalProps> = ({
                 key={st.id}
                 className={`h-1.5 rounded-full transition-all duration-200 ${
                   idx === stepIndex
-                    ? 'w-6 bg-[var(--accent-btn)]'
+                    ? 'w-6 bg-[#F6A59E]'
                     : idx < stepIndex
                       ? 'w-2.5 bg-[var(--pos-text)]'
                       : 'w-2.5 bg-[var(--border-hairline)]'
@@ -415,7 +415,11 @@ export const OnboardingTourModal: React.FC<OnboardingTourModalProps> = ({
                     setStepIndex((i) => Math.min(TOUR_STEPS.length - 1, i + 1));
                   }
                 }}
-                className="min-h-[44px] px-5 rounded-full bg-[var(--accent-btn)] hover:bg-[var(--accent-btn-hover)] text-[var(--accent-btn-text)] text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer shadow-sm whitespace-nowrap"
+                style={{
+                  backgroundColor: 'var(--btn-navy-bg)',
+                  color: 'var(--btn-navy-text)',
+                }}
+                className="min-h-[44px] px-5 rounded-full text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer shadow-sm hover:opacity-92 transition-opacity whitespace-nowrap"
               >
                 <span>{isLast ? 'Finalizar y empezar' : 'Siguiente'}</span>
                 <ArrowRight className="w-3.5 h-3.5" />

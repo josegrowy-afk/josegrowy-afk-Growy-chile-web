@@ -11,8 +11,13 @@ import {
   getProductMarginPercent,
   getTotalFixedCostsForMonth,
 } from '../finance/formulas';
+import {
+  calculateOwnerSalaryImpact,
+  calculatePriceSensitivityTable,
+} from '../finance/phase2Insights';
 import type { BusinessWorkspace, ProductItem } from '../types/finance';
 import { DoodleSparkleMotif, EquilibrioProductIcon, GrowyDivider } from './GrowyMotifs';
+import { GlassCard, SectionTitle, SolidCard } from './design-system';
 
 interface CalculatorViewProps {
   business: BusinessWorkspace;
@@ -143,6 +148,22 @@ export const CalculatorView: React.FC<CalculatorViewProps> = ({
     priceDelta !== 0 || varCostDelta !== 0 || fixedCostDelta !== 0 || hasProductOverrides;
   const activeResult = isSimulating ? simAnalysis : baseAnalysis;
 
+  const ownerSalaryImpact = useMemo(
+    () => calculateOwnerSalaryImpact(business, selectedMonth),
+    [business, selectedMonth]
+  );
+
+  const sensitivityRows = useMemo(
+    () =>
+      calculatePriceSensitivityTable({
+        fixedCosts: simulatedFixedCosts,
+        products: business.products,
+        targetProfit: business.targetProfit,
+        expectedUnits: business.expectedMonthlyUnits,
+      }),
+    [simulatedFixedCosts, business.products, business.targetProfit, business.expectedMonthlyUnits]
+  );
+
   const breakEvenSharePct =
     activeResult.targetTotalUnits > 0
       ? (activeResult.breakEvenUnits / activeResult.targetTotalUnits) * 100
@@ -248,20 +269,18 @@ export const CalculatorView: React.FC<CalculatorViewProps> = ({
   return (
     <div className="space-y-6">
       <header className="flex flex-col md:flex-row md:items-end justify-between gap-4">
-        <div>
+        <div className="space-y-1.5">
           <div className="flex items-center gap-2">
             <EquilibrioProductIcon size="xs" />
-            <p className="text-xs font-semibold text-[var(--text-secondary)]">
+            <span className="text-xs font-semibold text-[var(--text-secondary)]">
               Calculadora Financiera · Punto de Equilibrio
-            </p>
+            </span>
           </div>
-          <h1 className="font-display text-2xl sm:text-3xl font-bold tracking-tight text-[var(--text-primary)] mt-1.5">
-            Punto de{' '}
-            <em className="font-editorial italic font-semibold text-[var(--accent-strong)]">
-              equilibrio
-            </em>{' '}
-            y meta de ganancia
-          </h1>
+          <SectionTitle
+            as="h1"
+            size="md"
+            title="Punto de *equilibrio* y meta de ganancia"
+          />
         </div>
 
         <div className="flex items-center gap-3">
@@ -279,7 +298,7 @@ export const CalculatorView: React.FC<CalculatorViewProps> = ({
 
       {/* Entradas principales + Resultado hero */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
-        <div className="lg:col-span-5 boho-card p-6 space-y-5">
+        <SolidCard className="lg:col-span-5 p-5 sm:p-6 space-y-5">
           <div>
             <label
               htmlFor="target-profit-input"
@@ -366,11 +385,28 @@ export const CalculatorView: React.FC<CalculatorViewProps> = ({
                 ({formatPercent(activeResult.weightedEconomics.weightedMarginPercent)})
               </span>
             </div>
+            {ownerSalaryImpact.included && ownerSalaryImpact.monthlyAmount > 0 ? (
+              <div className="p-2.5 rounded-xl bg-[var(--sec-soft)] border border-[var(--sec-border)] text-[11px] text-[var(--sec-text)]">
+                Con tu sueldo de dueño (
+                <strong className="font-mono">
+                  {formatCurrency(ownerSalaryImpact.monthlyAmount, business.currency)}
+                </strong>
+                /mes): equilibrio referencial ={' '}
+                <strong className="font-mono">
+                  {formatNumber(ownerSalaryImpact.adjustedBreakEvenUnits)} u.
+                </strong>
+              </div>
+            ) : (
+              <div className="p-2.5 rounded-xl bg-[var(--warn-soft)] border border-[var(--warn-border)] text-[11px] text-[var(--warn-text)]">
+                Sueldo del dueño no incluido: recuerda evitar la{' '}
+                <strong>utilidad ilusoria</strong> activándolo en Configuración.
+              </div>
+            )}
           </div>
-        </div>
+        </SolidCard>
 
         {/* Tarjeta resumen de resultados */}
-        <div className="lg:col-span-7 boho-card growy-hero-surface p-6 sm:p-7 flex flex-col justify-between">
+        <GlassCard className="lg:col-span-7 p-6 sm:p-7 flex flex-col justify-between">
           <div>
             <div className="flex flex-wrap items-center justify-between gap-3">
               <span className="inline-flex items-center gap-1.5 text-xs font-bold text-[var(--sec-text)]">
@@ -507,23 +543,20 @@ export const CalculatorView: React.FC<CalculatorViewProps> = ({
               </p>
             </div>
           </div>
-        </div>
+        </GlassCard>
       </div>
 
       {/* Sliders dinámicos: ajuste por producto + simulador global "¿Y si...?" */}
-      <section className="boho-card p-6">
+      <SolidCard className="p-5 sm:p-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2.5">
-            <Sliders className="w-5 h-5 text-[var(--accent-strong)]" />
-            <div>
-              <h2 className="font-display text-xl font-bold text-[var(--text-primary)]">
-                Ajuste dinámico de precios de venta y costos variables
-              </h2>
-              <p className="text-xs text-[var(--text-secondary)]">
-                Desliza los controles por producto o globales para ver el cambio instantáneo en tu
-                punto de equilibrio.
-              </p>
-            </div>
+            <Sliders className="w-5 h-5 text-[var(--accent-strong)] shrink-0" />
+            <SectionTitle
+              as="h2"
+              size="sm"
+              title="Ajuste dinámico de *precios* y costos variables"
+              subtitle="Desliza los controles por producto o globales para ver el cambio instantáneo en tu punto de equilibrio."
+            />
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
@@ -532,7 +565,8 @@ export const CalculatorView: React.FC<CalculatorViewProps> = ({
                 <button
                   type="button"
                   onClick={handleApplySimulatedCatalog}
-                  className="inline-flex items-center gap-1.5 min-h-[44px] px-5 py-2 rounded-full bg-[var(--accent-btn)] hover:bg-[var(--accent-btn-hover)] text-[var(--accent-btn-text)] text-xs font-bold cursor-pointer transition-colors shadow-sm"
+                  style={{ backgroundColor: 'var(--btn-navy-bg)', color: 'var(--btn-navy-text)' }}
+                  className="inline-flex items-center gap-1.5 min-h-[44px] px-5 py-2 rounded-full text-xs font-bold cursor-pointer hover:opacity-92 transition-opacity shadow-sm"
                 >
                   <Check className="w-3.5 h-3.5" />
                   <span>Guardar precios y costos en catálogo</span>
@@ -801,21 +835,110 @@ export const CalculatorView: React.FC<CalculatorViewProps> = ({
             </span>
           </div>
         )}
-      </section>
+
+        {/* 2.6 Tabla de sensibilidad de precios ("¿Y si subo o bajo 5%, 10%?") — Solo lectura */}
+        {business.products.length > 0 && (
+          <div className="mt-6 pt-5 border-t border-[var(--border-hairline)] space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h3 className="font-display text-base font-bold text-[var(--text-primary)]">
+                  Tabla "¿Y si subo o bajo el precio 5% o 10%?"
+                </h3>
+                <p className="text-xs text-[var(--text-secondary)]">
+                  Comparativa instantánea del nuevo punto de equilibrio. Es solo simulación y no cambia tus datos guardados.
+                </p>
+              </div>
+              <span className="text-[11px] font-semibold text-[var(--sec-text)] bg-[var(--sec-soft)] border border-[var(--sec-border)] px-3 py-1 rounded-full">
+                No modifica tu catálogo
+              </span>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs sm:text-sm text-left border-collapse min-w-[600px]">
+                <thead>
+                  <tr className="border-b border-[var(--border-hairline)] text-xs text-[var(--text-secondary)]">
+                    <th className="py-2 pr-3 font-semibold">Escenario de precio</th>
+                    <th className="py-2 px-3 font-semibold text-right">Precio prom.</th>
+                    <th className="py-2 px-3 font-semibold text-right">Margen unit.</th>
+                    <th className="py-2 px-3 font-semibold text-right">Nuevo equilibrio</th>
+                    <th className="py-2 px-3 font-semibold text-right">Dif. unidades</th>
+                    <th className="py-2 pl-3 font-semibold text-right">Utilidad esp.</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sensitivityRows.map((row) => (
+                    <tr
+                      key={row.deltaPercent}
+                      className={`border-b border-[var(--border-hairline)] last:border-0 ${
+                        row.isBaseline ? 'bg-[var(--accent-soft)]/55 font-semibold' : ''
+                      }`}
+                    >
+                      <td className="py-2.5 pr-3 text-[var(--text-primary)]">{row.label}</td>
+                      <td className="py-2.5 px-3 text-right font-mono tabular-nums">
+                        {formatCurrency(row.weightedPrice, business.currency)}
+                      </td>
+                      <td className="py-2.5 px-3 text-right font-mono tabular-nums">
+                        {formatCurrency(row.weightedUnitContribution, business.currency)}{' '}
+                        <span className="text-[11px] text-[var(--text-secondary)]">
+                          ({formatPercent(row.weightedMarginPercent)})
+                        </span>
+                      </td>
+                      <td className="py-2.5 px-3 text-right font-mono tabular-nums font-bold text-[var(--text-primary)]">
+                        {row.isViable ? (
+                          <>
+                            {formatNumber(row.breakEvenUnits)} u.{' '}
+                            <span className="block text-[10px] font-normal text-[var(--text-secondary)]">
+                              {formatCurrency(row.breakEvenRevenue, business.currency)}
+                            </span>
+                          </>
+                        ) : (
+                          <span className="text-[var(--danger-text)]">No viable</span>
+                        )}
+                      </td>
+                      <td
+                        className={`py-2.5 px-3 text-right font-mono tabular-nums font-bold ${
+                          row.breakEvenUnitsDelta < 0
+                            ? 'text-[var(--pos-text)]'
+                            : row.breakEvenUnitsDelta > 0
+                              ? 'text-[var(--danger-text)]'
+                              : 'text-[var(--text-secondary)]'
+                        }`}
+                      >
+                        {!row.isViable
+                          ? '—'
+                          : row.breakEvenUnitsDelta === 0
+                            ? 'Base'
+                            : `${row.breakEvenUnitsDelta > 0 ? '+' : ''}${row.breakEvenUnitsDelta} u.`}
+                      </td>
+                      <td
+                        className={`py-2.5 pl-3 text-right font-mono tabular-nums font-semibold ${
+                          row.expectedProfit >= 0
+                            ? 'text-[var(--pos-text)]'
+                            : 'text-[var(--danger-text)]'
+                        }`}
+                      >
+                        {formatCurrency(row.expectedProfit, business.currency)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </SolidCard>
 
       <GrowyDivider />
 
       {/* Análisis individual por producto */}
       {activeResult.perProduct.length > 0 && (
-        <section className="boho-card p-6">
-          <div>
-            <h2 className="font-display text-lg font-bold text-[var(--text-primary)]">
-              Análisis individual por producto o servicio
-            </h2>
-            <p className="text-xs text-[var(--text-secondary)] mt-0.5">
-              Unidades necesarias si este ítem cubriera por sí solo tus costos fijos y meta de ganancia.
-            </p>
-          </div>
+        <SolidCard className="p-5 sm:p-6">
+          <SectionTitle
+            as="h2"
+            size="sm"
+            title="Análisis *individual* por producto o servicio"
+            subtitle="Unidades necesarias si este ítem cubriera por sí solo tus costos fijos y meta de ganancia."
+          />
           <div className="mt-4 overflow-x-auto">
             <table className="w-full text-sm text-left border-collapse">
               <thead>
@@ -876,7 +999,7 @@ export const CalculatorView: React.FC<CalculatorViewProps> = ({
               </tbody>
             </table>
           </div>
-        </section>
+        </SolidCard>
       )}
     </div>
   );

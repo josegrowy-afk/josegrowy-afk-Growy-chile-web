@@ -51,6 +51,8 @@ export interface ProductItem {
   shippingCost?: number;
   /** Costo de tiempo personal involucrado por unidad */
   personalTimeCost?: number;
+  /** Minutos de tiempo personal dedicados por unidad (opcional, para calcular margen por hora) */
+  personalTimeMinutes?: number;
   /** Campo legado opcional (no usado en UI) */
   mixPercent?: number;
   /** Control inteligente de inventario (opcional por producto) */
@@ -159,6 +161,41 @@ export interface WorkingCapitalExtras {
   otherCurrentLiabilities?: number;
 }
 
+export interface IvaSettings {
+  /** Activar estimador referencial de IVA mensual */
+  enabled?: boolean;
+  /** true = los precios ingresados incluyen IVA; false = precios netos */
+  pricesIncludeIva?: boolean;
+  /** Día del mes configurable para recordatorio de F29 (1 a 28) */
+  f29Day?: number;
+  /** Tasa de IVA porcentual (por defecto 19% en Chile) */
+  ivaRatePercent?: number;
+}
+
+export interface OwnerSalaryConfig {
+  /** true = incluir sueldo del dueño como costo fijo de referencia */
+  included?: boolean;
+  /** Sueldo mensual asignado al dueño */
+  monthlyAmount?: number;
+}
+
+export interface MonthlyCloseChecklist {
+  month: string;
+  actualsChecked?: boolean;
+  receivablesPayablesChecked?: boolean;
+  comparedVsProjected?: boolean;
+  deviationsReviewed?: boolean;
+  closedAt?: string;
+  notes?: string;
+}
+
+export interface CashFlowScenarioConfig {
+  optimisticInflowPct?: number;
+  optimisticOutflowPct?: number;
+  pessimisticInflowPct?: number;
+  pessimisticOutflowPct?: number;
+}
+
 export interface BusinessWorkspace {
   id: string;
   ownerUid?: string;
@@ -182,6 +219,12 @@ export interface BusinessWorkspace {
   receivables?: AccountReceivable[];
   payables?: AccountPayable[];
   inventoryMovements?: InventoryMovement[];
+  /** Realidad chilena: estimación de IVA / F29 y sueldo del dueño */
+  ivaSettings?: IvaSettings;
+  ownerSalary?: OwnerSalaryConfig;
+  /** Fase 3: cierre de mes guiado y escenarios de flujo de caja */
+  monthlyCloseChecklists?: Record<string, MonthlyCloseChecklist>;
+  cashFlowScenarioConfig?: CashFlowScenarioConfig;
   isDemo?: boolean;
   createdAt?: string;
   updatedAt: string;
@@ -214,6 +257,8 @@ export type PaymentStatus = 'unpaid' | 'paid' | 'code_redeemed' | 'manual_admin'
 export type BillingDay = 5 | 15 | 30;
 export type PlanType = 'monthly' | 'annual';
 
+export type MpSubscriptionStatus = 'none' | 'pending' | 'authorized' | 'paused' | 'cancelled';
+
 export interface UserProfile {
   uid: string;
   email: string;
@@ -228,6 +273,13 @@ export interface UserProfile {
   accessCodeUsed?: string;
   paymentReference?: string;
   onboardingCompleted?: boolean;
+  /** Fase 3: resumen mensual por correo, referidos y débito automático Mercado Pago */
+  monthlySummaryEmailEnabled?: boolean;
+  referredByCode?: string;
+  referralMonthsEarned?: number;
+  mpPreapprovalId?: string;
+  mpSubscriptionStatus?: MpSubscriptionStatus;
+  autoRenewEnabled?: boolean;
   createdAt?: unknown;
   updatedAt?: unknown;
 }
@@ -285,22 +337,82 @@ export interface LandingContentConfig {
   closingTitle: string;
   closingSubtitle: string;
   closingCtaLabel: string;
+  painEyebrow: string;
+  painTitle: string;
+  painPoints: string;
+  priceComparisonText: string;
+  privacyTitle: string;
+  privacyBody: string;
+  supportHumanTitle: string;
+  supportHumanBody: string;
+}
+
+export interface TestimonialItem {
+  id: string;
+  name: string;
+  businessName: string;
+  city?: string;
+  quote: string;
+  resultHighlight?: string;
+  permissionGranted: boolean;
+}
+
+export type FunnelStep =
+  | 'visit'
+  | 'login'
+  | 'onboarding'
+  | 'first_calculation'
+  | 'payment';
+
+export interface FunnelEventRecord {
+  id: string;
+  sessionId: string;
+  step: FunnelStep;
+  source?: 'landing' | 'public_calculator' | 'app' | 'demo' | 'payment_view';
+  planType?: PlanType;
+  day: string;
+  createdAt?: unknown;
 }
 
 export interface AppConfig {
   paymentUrl: string;
   annualPaymentUrl?: string;
+  monthlyPriceClp?: number;
+  annualPriceClp?: number;
+  mpRecurringEnabled?: boolean;
   priceLabel: string;
   currencyNote: string;
   heroTitle: string;
   heroSubtitle: string;
   guaranteeText: string;
+  refundGuaranteeText?: string;
+  whatsappUrl?: string;
+  testimonials?: TestimonialItem[];
   contactEmail: string;
   welcomeMessage: string;
   announcementText: string;
   announcementActive: boolean;
   landingContent?: Partial<LandingContentConfig>;
   updatedAt?: unknown;
+}
+
+export interface GuideLead {
+  id: string;
+  email: string;
+  fixedCosts?: number;
+  variableCost?: number;
+  unitPrice?: number;
+  breakEvenUnits?: number;
+  consentAccepted: boolean;
+  source: 'landing_calculator';
+  createdAt?: unknown;
+}
+
+export interface PublicBreakEvenDraft {
+  fixedCosts: number;
+  variableCost: number;
+  unitPrice: number;
+  createdAt: string;
 }
 
 export type FaqCategory = 'pagos' | 'uso' | 'calculos' | 'cuenta' | 'soporte';
@@ -320,6 +432,13 @@ export interface AccessCode {
   code: string;
   status: 'unused' | 'used' | 'revoked';
   note?: string;
+  codeKind?: 'standard' | 'referral';
+  referrerUid?: string;
+  referrerEmail?: string;
+  referrerDisplayName?: string;
+  bonusDays?: number;
+  referrerRewardApplied?: boolean;
+  referrerRewardAppliedAt?: string;
   createdBy: string;
   createdAt?: unknown;
   usedByUid?: string;

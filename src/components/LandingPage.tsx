@@ -1,24 +1,44 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  AlertCircle,
   ArrowRight,
+  BookOpen,
+  Calculator,
   Check,
   ChevronDown,
   FileText,
+  HelpCircle,
+  Lock,
   Mail,
-  Moon,
   Paperclip,
   Play,
   PlayCircle,
+  Quote,
   Search,
   Send,
+  ShieldCheck,
   Smartphone,
   Sparkles,
-  Sun,
   Trash2,
+  UserCheck,
   X,
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
-import { createSupportTicket, DEFAULT_LANDING_CONTENT } from '../firebase/services';
+import { BLOG_POSTS, type BlogPost } from '../data/blogArticles';
+import {
+  createSupportTicket,
+  DEFAULT_LANDING_CONTENT,
+  trackFunnelStepOncePerSession,
+} from '../firebase/services';
+import {
+  calculatePlanComparisonFromConfig,
+  savePublicBreakEvenDraft,
+} from '../finance/phase1Insights';
+import {
+  buildFaqJsonLd,
+  filterApprovedTestimonials,
+  sanitizeWhatsappUrl,
+} from '../finance/phase4Marketing';
 import type {
   AppConfig,
   FaqCategory,
@@ -32,6 +52,18 @@ import {
   processSupportAttachments,
 } from '../utils/attachments';
 import { BreakEvenExampleChart } from './BreakEvenExampleChart';
+import {
+  BackdropBlobs,
+  ChipLink,
+  EditorialText,
+  FloatingNav,
+  GlassCard,
+  HeroBanner,
+  SectionTitle,
+  SolidCard,
+  type FloatingNavItem,
+  type HeroBannerChip,
+} from './design-system';
 import {
   DoodleIdeaMotif,
   DoodleSparkleMotif,
@@ -49,6 +81,7 @@ import {
   StaggerSection,
 } from './MotionPrimitives';
 import { EquilibrioProductMockup, ProductShowcaseCard } from './ProductShowcaseCard';
+import { PublicBreakEvenCalculator } from './PublicBreakEvenCalculator';
 
 interface LandingPageProps {
   config: AppConfig;
@@ -57,6 +90,7 @@ interface LandingPageProps {
   isSignedIn: boolean;
   onToggleTheme: () => void;
   onLoginClick: () => void;
+  onTryDemo?: () => void;
   authLoading: boolean;
   authError: string | null;
 }
@@ -85,42 +119,20 @@ function splitParagraphs(text: string): string[] {
 }
 
 /**
- * Renderiza el titular del Hero destacando en Fraunces cursiva (#B4474A)
- * el texto entre asteriscos (*sueña*) o la palabra "sueña" si no tiene asteriscos.
+ * Prepara el titular del Hero para `EditorialText`, destacando en cursiva
+ * el texto entre asteriscos o la palabra "sueña" si aún no tiene asteriscos.
  */
-function renderHeroHeadline(title: string): React.ReactNode {
-  const starMatch = title.match(/\*(.+?)\*/);
-  if (starMatch && starMatch.index !== undefined) {
-    const before = title.slice(0, starMatch.index);
-    const word = starMatch[1];
-    const after = title.slice(starMatch.index + starMatch[0].length);
-    return (
-      <>
-        {before}
-        <em className="font-editorial italic font-semibold text-[var(--accent-strong)]">
-          {word}
-        </em>
-        {after}
-      </>
-    );
+function formatHeroHeadlineForEditorial(title: string): string {
+  if (/\*[^*]+\*/.test(title)) {
+    return title;
   }
-
   const suenaIndex = title.toLowerCase().indexOf('sueña');
   if (suenaIndex !== -1) {
     const before = title.slice(0, suenaIndex);
     const word = title.slice(suenaIndex, suenaIndex + 5);
     const after = title.slice(suenaIndex + 5);
-    return (
-      <>
-        {before}
-        <em className="font-editorial italic font-semibold text-[var(--accent-strong)]">
-          {word}
-        </em>
-        {after}
-      </>
-    );
+    return `${before}*${word}*${after}`;
   }
-
   return title;
 }
 
@@ -131,6 +143,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
   isSignedIn,
   onToggleTheme,
   onLoginClick,
+  onTryDemo,
   authLoading,
   authError,
 }) => {
@@ -140,6 +153,11 @@ export const LandingPage: React.FC<LandingPageProps> = ({
       ...(config.landingContent ?? {}),
     }),
     [config.landingContent]
+  );
+
+  const planSummary = useMemo(
+    () => calculatePlanComparisonFromConfig(config),
+    [config]
   );
 
   // FAQ state
@@ -175,10 +193,22 @@ export const LandingPage: React.FC<LandingPageProps> = ({
   const learnVideoRef = useRef<HTMLVideoElement | null>(null);
   const [learnVideoStarted, setLearnVideoStarted] = useState(false);
 
-  // Modales legales
+  // Modales legales y lector de guías (Blog)
   const [legalModal, setLegalModal] = useState<'privacy' | 'terms' | null>(null);
+  const [selectedBlogPost, setSelectedBlogPost] = useState<BlogPost | null>(null);
 
   const heroChecks = useMemo(() => splitLines(lc.heroChecks), [lc.heroChecks]);
+  const painPointsList = useMemo(() => splitLines(lc.painPoints), [lc.painPoints]);
+
+  const approvedTestimonials = useMemo(
+    () => filterApprovedTestimonials(config.testimonials),
+    [config.testimonials]
+  );
+
+  const whatsappHref = useMemo(
+    () => sanitizeWhatsappUrl(config.whatsappUrl),
+    [config.whatsappUrl]
+  );
 
   const importancePoints = useMemo(
     () => splitLines(lc.breakevenImportancePoints),
@@ -191,6 +221,35 @@ export const LandingPage: React.FC<LandingPageProps> = ({
   );
 
   const creatorParagraphs = useMemo(() => splitParagraphs(lc.creatorBio), [lc.creatorBio]);
+
+  // 4.5 Analítica mínima de embudo: registrar visita una vez por sesión sin PII ni cookies
+  useEffect(() => {
+    trackFunnelStepOncePerSession('visit', { source: 'landing' });
+  }, []);
+
+  // 4.4 SEO dinámico: FAQPage JSON-LD construido únicamente desde FAQs publicadas
+  useEffect(() => {
+    const schema = buildFaqJsonLd(faqs);
+    const scriptId = 'growy-faq-jsonld';
+    let scriptEl = document.getElementById(scriptId) as HTMLScriptElement | null;
+
+    if (!schema) {
+      if (scriptEl) scriptEl.remove();
+      return;
+    }
+
+    if (!scriptEl) {
+      scriptEl = document.createElement('script');
+      scriptEl.id = scriptId;
+      scriptEl.type = 'application/ld+json';
+      document.head.appendChild(scriptEl);
+    }
+    scriptEl.textContent = JSON.stringify(schema);
+
+    return () => {
+      document.getElementById(scriptId)?.remove();
+    };
+  }, [faqs]);
 
   const filteredFaqs = useMemo(() => {
     const q = faqQuery.trim().toLowerCase();
@@ -305,212 +364,201 @@ export const LandingPage: React.FC<LandingPageProps> = ({
     }
   };
 
+  const navItems: FloatingNavItem[] = useMemo(
+    () => [
+      {
+        id: 'plataforma',
+        label: 'Plataforma',
+        shortLabel: 'Inicio',
+        href: '#que-es-growy',
+        icon: <Sparkles className="w-4 h-4" />,
+      },
+      {
+        id: 'equilibrio',
+        label: 'Equilibrio',
+        shortLabel: 'Equilibrio',
+        href: '#equilibrio',
+      },
+      {
+        id: 'cimientos',
+        label: 'Punto de equilibrio',
+        shortLabel: 'Cimientos',
+        href: '#punto-de-equilibrio',
+        icon: <Calculator className="w-4 h-4" />,
+      },
+      {
+        id: 'creador',
+        label: 'Quién soy',
+        shortLabel: 'Quién soy',
+        href: '#creador',
+      },
+      {
+        id: 'guias',
+        label: 'Guías',
+        shortLabel: 'Guías',
+        href: '#guias',
+        icon: <BookOpen className="w-4 h-4" />,
+      },
+      {
+        id: 'faq',
+        label: 'Preguntas',
+        shortLabel: 'Dudas',
+        href: '#faq',
+        icon: <HelpCircle className="w-4 h-4" />,
+      },
+    ],
+    []
+  );
+
+  // Ítems del dock móvil (2 izquierda + centro Equilibrio + 2 derecha)
+  const mobileDockItems = useMemo(
+    () => [navItems[0], navItems[2], navItems[4], navItems[5]],
+    [navItems]
+  );
+
+  const heroChips: HeroBannerChip[] = useMemo(() => {
+    const base: HeroBannerChip[] = [
+      {
+        id: 'equilibrio',
+        label: `${lc.heroPrimaryCta}`,
+        href: '#equilibrio',
+        variant: 'navy',
+      },
+      {
+        id: 'cimientos',
+        label: 'Calcular *equilibrio*',
+        href: '#punto-de-equilibrio',
+        variant: 'cream',
+      },
+      {
+        id: 'aprende',
+        label: 'Video *1 min*',
+        href: '#aprende-con-nosotros',
+        variant: 'lilac',
+      },
+    ];
+    if (onTryDemo && !isSignedIn) {
+      base.splice(1, 0, {
+        id: 'demo',
+        label: 'Probar *demo* gratis',
+        onClick: onTryDemo,
+        variant: 'sage',
+      });
+    }
+    return base;
+  }, [isSignedIn, lc.heroPrimaryCta, onTryDemo]);
+
   return (
-    <div className="min-h-screen flex flex-col">
-      {/* BARRA SUPERIOR: Logo GROWy. | 5 enlaces | Entrar con Google + Modo oscuro */}
-      <header className="sticky top-0 z-30 border-b border-[var(--border-hairline)] bg-[var(--bg-canvas-alpha)] backdrop-blur-md">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-6">
-          <a
-            href="#inicio"
-            aria-label="GROWy. Inicio"
-            className="whitespace-nowrap shrink-0"
-          >
-            <GrowyLogoMark size="md" />
-          </a>
+    <div id="inicio" className="relative min-h-screen flex flex-col">
+      <BackdropBlobs />
 
-          <nav
-            aria-label="Secciones principales"
-            className="hidden md:flex items-center gap-6 text-sm font-medium text-[var(--text-secondary)]"
-          >
-            <a
-              href="#que-es-growy"
-              className="hover:text-[var(--text-primary)] transition-colors whitespace-nowrap shrink-0"
-            >
-              Plataforma
-            </a>
-            <a
-              href="#equilibrio"
-              className="hover:text-[var(--text-primary)] transition-colors whitespace-nowrap shrink-0"
-            >
-              Equilibrio
-            </a>
-            <a
-              href="#punto-de-equilibrio"
-              className="hover:text-[var(--text-primary)] transition-colors whitespace-nowrap shrink-0"
-            >
-              Punto de equilibrio
-            </a>
-            <a
-              href="#creador"
-              className="hover:text-[var(--text-primary)] transition-colors whitespace-nowrap shrink-0"
-            >
-              Quién soy
-            </a>
-            <a
-              href="#faq"
-              className="hover:text-[var(--text-primary)] transition-colors whitespace-nowrap shrink-0"
-            >
-              Preguntas
-            </a>
-          </nav>
+      {/* NAVEGACIÓN FLOTANTE EN PÍLDORA (escritorio superior + dock móvil inferior con Equilibrio) */}
+      <FloatingNav
+        items={navItems}
+        mobileItems={mobileDockItems}
+        logoHref="#inicio"
+        isDark={isDark}
+        onToggleTheme={onToggleTheme}
+        primaryAction={{
+          label: isSignedIn ? 'Ir a mi cuenta' : authLoading ? 'Conectando...' : 'Entrar',
+          onClick: authLoading ? undefined : onLoginClick,
+        }}
+        onCenterMobileClick={() => {
+          document.getElementById('equilibrio')?.scrollIntoView({ behavior: 'smooth' });
+        }}
+        centerMobileLabel="Ir a Equilibrio"
+        className="pt-3 relative z-40"
+      />
 
-          <div className="flex items-center gap-2.5 shrink-0">
-            <button
-              type="button"
-              onClick={onToggleTheme}
-              aria-label={isDark ? 'Activar modo día' : 'Activar modo noche'}
-              className="min-w-[42px] min-h-[42px] flex items-center justify-center rounded-full hover:bg-[var(--bg-surface)] cursor-pointer transition-colors"
-            >
-              {isDark ? (
-                <Sun className="w-4 h-4 text-[var(--gold-motif)]" />
-              ) : (
-                <Moon className="w-4 h-4 text-[var(--text-primary)]" />
-              )}
-            </button>
-            <button
-              type="button"
-              onClick={onLoginClick}
-              disabled={authLoading}
-              className="min-h-[44px] px-6 py-2 rounded-full bg-[var(--accent-btn)] hover:bg-[var(--accent-btn-hover)] text-[var(--accent-btn-text)] text-sm font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer disabled:opacity-60 shadow-xs"
-            >
-              {isSignedIn ? 'Ir a mi cuenta' : authLoading ? 'Conectando...' : 'Entrar con Google'}
-            </button>
-          </div>
-        </div>
-      </header>
-
-      <main className="flex-1">
-        {/* 1. HERO */}
-        <section id="inicio" className="relative overflow-hidden pt-10 pb-10 sm:pt-14 sm:pb-12">
-          <div className="relative max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 grid grid-cols-1 lg:grid-cols-12 gap-10 lg:gap-12 items-center">
-            <StaggerSection className="lg:col-span-6 space-y-6">
-              <StaggerItem>
-                <span className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-[var(--sec-soft)] border border-[var(--sec-border)] text-xs font-semibold text-[var(--sec-text)]">
-                  <Sparkles className="w-3.5 h-3.5 text-[var(--sec-text)] shrink-0" />
-                  <span>{lc.heroEyebrow}</span>
-                </span>
-              </StaggerItem>
-
-              <StaggerItem>
-                <h1
-                  className="font-display font-bold text-[var(--text-primary)] leading-[1.05] tracking-[-0.03em] text-balance"
-                  style={{ fontSize: 'clamp(2.55rem, 4.6vw, 4.15rem)' }}
-                >
-                  {renderHeroHeadline(config.heroTitle)}
-                </h1>
-              </StaggerItem>
-
-              <StaggerItem>
-                <p className="text-base sm:text-lg text-[var(--text-secondary)] leading-relaxed max-w-xl">
-                  {config.heroSubtitle}
-                </p>
-              </StaggerItem>
-
-              {authError && (
-                <StaggerItem>
-                  <p className="text-xs font-semibold text-[var(--danger-text)] bg-[var(--danger-soft)] p-3 rounded-2xl max-w-lg">
+      <main className="relative z-10 flex-1">
+        {/* 1. HERO BANNER CÁLIDO EDITORIAL + LÍNEA DE PRODUCTOS */}
+        <section className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 pt-4 sm:pt-6 pb-8 space-y-6">
+          <HeroBanner
+            eyebrow={lc.heroEyebrow}
+            headline={formatHeroHeadlineForEditorial(config.heroTitle)}
+            headlineSize="landing"
+            subtitle={config.heroSubtitle}
+            chips={heroChips}
+            bottomSlot={
+              <div className="space-y-3">
+                {authError && (
+                  <p className="text-xs font-semibold text-[var(--danger-text)] bg-[var(--danger-soft)] border border-[var(--accent-soft-border)] px-4 py-2.5 rounded-2xl max-w-lg">
                     {authError}
                   </p>
-                </StaggerItem>
-              )}
+                )}
 
-              <StaggerItem>
-                <div className="flex flex-wrap items-center gap-3.5 pt-1">
-                  <a
-                    href="#equilibrio"
-                    className="inline-flex items-center justify-center gap-2 min-h-[48px] px-7 py-3 rounded-full bg-[var(--accent-btn)] hover:bg-[var(--accent-btn-hover)] text-[var(--accent-btn-text)] text-sm font-bold transition-colors whitespace-nowrap shadow-xs"
-                  >
-                    <span>{lc.heroPrimaryCta}</span>
-                    <ArrowRight className="w-4 h-4" />
-                  </a>
-
-                  <a
-                    href="#punto-de-equilibrio"
-                    className="inline-flex items-center justify-center min-h-[48px] px-6 py-3 rounded-full bg-[var(--bg-surface)] hover:bg-[var(--sec-soft)] border border-[var(--sec-border)] text-sm font-semibold text-[var(--text-primary)] transition-colors whitespace-nowrap"
-                  >
-                    ¿Qué es el punto de equilibrio?
-                  </a>
-                </div>
-              </StaggerItem>
-
-              <StaggerItem>
-                <ul className="flex flex-wrap items-center gap-x-6 gap-y-2.5 pt-2">
+                <ul className="flex flex-wrap items-center gap-x-5 gap-y-2 pt-1">
                   {heroChecks.map((checkLabel) => (
                     <li
                       key={checkLabel}
-                      className="inline-flex items-center gap-2 text-xs sm:text-sm font-medium text-[var(--text-secondary)]"
+                      className="inline-flex items-center gap-2 text-xs sm:text-sm font-semibold"
+                      style={{ color: 'var(--hero-ink)' }}
                     >
-                      <Check
-                        className="w-4 h-4 text-[var(--pos-text)] shrink-0"
-                        strokeWidth={2.4}
-                      />
+                      <span className="w-5 h-5 rounded-full bg-white/65 border border-[var(--navy-ink)]/20 inline-flex items-center justify-center shrink-0">
+                        <Check
+                          className="w-3 h-3 text-[var(--navy-ink)]"
+                          strokeWidth={2.6}
+                        />
+                      </span>
                       <span>{checkLabel}</span>
                     </li>
                   ))}
                 </ul>
-              </StaggerItem>
-            </StaggerSection>
-
-            {/* Columna derecha: tarjeta blanca grande con el personaje oficial y tarjetas de producto */}
-            <motion.div
-              className="lg:col-span-6"
-              initial={{ opacity: 0, y: 18, scale: 0.985 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              transition={{ duration: 0.55, delay: 0.1, ease: GROWY_EASE }}
-            >
-              <div className="boho-card rounded-[36px] p-5 sm:p-6 space-y-4">
-                <div
-                  className="rounded-[26px] px-4 pt-5 pb-3 overflow-hidden"
-                  style={{
-                    background: isDark
-                      ? 'linear-gradient(155deg, #2B2440 0%, #37252D 100%)'
-                      : 'linear-gradient(155deg, #EDEAF8 0%, #FBECE9 100%)',
-                  }}
-                >
-                  <GrowyCharacterArtwork className="w-full max-w-[360px] mx-auto block select-none growy-float-a" />
-                </div>
-
-                {/* 01 · Equilibrio (verde destacada) */}
-                <a
-                  href="#equilibrio"
-                  className="flex items-center justify-between gap-3 px-4 py-3.5 rounded-2xl bg-[var(--pos-soft)] hover:opacity-95 border border-[var(--pos-dot)]/60 transition-all group"
-                >
-                  <div className="flex items-center gap-3 min-w-0">
-                    <EquilibrioProductIcon size="sm" />
-                    <div className="min-w-0">
-                      <p className="font-display text-sm font-bold text-[var(--text-primary)]">
-                        01 · Equilibrio
-                      </p>
-                      <p className="text-xs font-medium text-[var(--pos-text)] mt-0.5 tabular-nums">
-                        Disponible ahora · Desde {config.priceLabel} o $50.000 / año
-                      </p>
-                    </div>
-                  </div>
-                  <ArrowRight className="w-4 h-4 text-[var(--text-primary)] group-hover:translate-x-0.5 transition-transform shrink-0" />
-                </a>
-
-                {/* 02 y 03 · Próximamente (borde punteado lila) */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div className="px-4 py-3 rounded-2xl border border-dashed border-[var(--sec-border)] bg-[var(--sec-soft)]/55">
-                    <p className="font-display text-xs font-bold text-[var(--sec-text)]">
-                      02 · Próximamente
-                    </p>
-                    <p className="text-xs text-[var(--text-secondary)] mt-0.5">
-                      Innovación y creatividad
-                    </p>
-                  </div>
-                  <div className="px-4 py-3 rounded-2xl border border-dashed border-[var(--sec-border)] bg-[var(--sec-soft)]/55">
-                    <p className="font-display text-xs font-bold text-[var(--sec-text)]">
-                      03 · Próximamente
-                    </p>
-                    <p className="text-xs text-[var(--text-secondary)] mt-0.5">
-                      Automatización de procesos
-                    </p>
-                  </div>
-                </div>
               </div>
-            </motion.div>
-          </div>
+            }
+            rightSlot={
+              <motion.div
+                initial={{ opacity: 0, y: 14, scale: 0.985 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                transition={{ duration: 0.5, delay: 0.08, ease: GROWY_EASE }}
+                className="w-full max-w-[340px] rounded-[32px] bg-white/40 border border-white/75 backdrop-blur-md p-4 sm:p-5 shadow-[var(--glass-shadow)]"
+              >
+                <GrowyCharacterArtwork className="w-full max-w-[290px] mx-auto block select-none growy-float-a" />
+              </motion.div>
+            }
+          />
+
+          {/* Tira de productos: solo 01 · Equilibrio disponible ahora; 02 y 03 siguen en Próximamente */}
+          <GlassCard radius="lg" className="p-4 sm:p-5">
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-3.5 items-stretch">
+              <a
+                href="#equilibrio"
+                className="lg:col-span-6 flex items-center justify-between gap-3 px-5 py-4 rounded-[24px] bg-[var(--pos-soft)] hover:opacity-95 border border-[var(--pos-border)] transition-all group"
+              >
+                <div className="flex items-center gap-3.5 min-w-0">
+                  <EquilibrioProductIcon size="sm" />
+                  <div className="min-w-0">
+                    <p className="font-display text-sm sm:text-base font-extrabold text-[var(--text-primary)]">
+                      01 · Equilibrio
+                    </p>
+                    <p className="text-xs font-medium text-[var(--pos-text)] mt-0.5 font-mono tabular-nums">
+                      Disponible ahora · {planSummary.monthlyPriceFormatted}/mes o{' '}
+                      {planSummary.annualPriceFormatted}/año
+                    </p>
+                  </div>
+                </div>
+                <ArrowRight className="w-4 h-4 text-[var(--text-primary)] group-hover:translate-x-0.5 transition-transform shrink-0" />
+              </a>
+
+              <div className="lg:col-span-3 px-4 py-3.5 rounded-[24px] border border-dashed border-[var(--sec-border)] bg-[var(--sec-soft)]/60 flex flex-col justify-center">
+                <p className="font-display text-xs font-extrabold text-[var(--sec-text)]">
+                  02 · Próximamente
+                </p>
+                <p className="text-xs text-[var(--text-secondary)] mt-0.5">
+                  Innovación y creatividad
+                </p>
+              </div>
+
+              <div className="lg:col-span-3 px-4 py-3.5 rounded-[24px] border border-dashed border-[var(--sec-border)] bg-[var(--sec-soft)]/60 flex flex-col justify-center">
+                <p className="font-display text-xs font-extrabold text-[var(--sec-text)]">
+                  03 · Próximamente
+                </p>
+                <p className="text-xs text-[var(--text-secondary)] mt-0.5">
+                  Automatización de procesos
+                </p>
+              </div>
+            </div>
+          </GlassCard>
         </section>
 
         {/* 2. TRES PASOS DE CÓMO FUNCIONA */}
@@ -520,16 +568,19 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               { title: lc.step1Title, desc: lc.step1Desc },
               { title: lc.step2Title, desc: lc.step2Desc },
               { title: lc.step3Title, desc: lc.step3Desc },
-            ].map((step) => (
+            ].map((step, idx) => (
               <StaggerItem key={step.title}>
-                <div className="boho-card boho-card-hover rounded-[24px] px-6 py-5 h-full space-y-1.5">
-                  <h2 className="font-display text-base sm:text-lg font-bold text-[var(--text-primary)] tracking-tight">
+                <SolidCard interactive className="px-6 py-5 h-full space-y-1.5">
+                  <span className="font-mono text-xs font-bold text-[var(--accent-strong)]">
+                    0{idx + 1}
+                  </span>
+                  <h2 className="font-display text-base sm:text-lg font-extrabold text-[var(--text-primary)] tracking-tight">
                     {step.title}
                   </h2>
                   <p className="text-xs sm:text-sm text-[var(--text-secondary)] leading-relaxed">
                     {step.desc}
                   </p>
-                </div>
+                </SolidCard>
               </StaggerItem>
             ))}
           </StaggerSection>
@@ -538,23 +589,23 @@ export const LandingPage: React.FC<LandingPageProps> = ({
         {/* 2B. APRENDE CON NOSOTROS (Video explicativo en la parte inicial) */}
         <section
           id="aprende-con-nosotros"
-          className="py-10 sm:py-14 max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 scroll-mt-20"
+          className="py-10 sm:py-14 max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 scroll-mt-24"
         >
           <ScrollReveal>
-            <div className="boho-card rounded-[32px] p-6 sm:p-10 grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-10 items-center border-2 border-[var(--sec-border)]">
+            <GlassCard
+              radius="lg"
+              className="p-6 sm:p-10 grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-10 items-center"
+            >
               {/* Texto introductorio */}
               <div className="lg:col-span-5 space-y-5">
-                <span className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-[var(--sec-soft)] border border-[var(--sec-border)] text-xs font-semibold text-[var(--sec-text)]">
-                  <PlayCircle className="w-3.5 h-3.5 shrink-0" />
+                <span className="inline-flex items-center gap-2 text-xs font-bold tracking-[0.06em] uppercase text-[var(--sec-text)]">
+                  <PlayCircle className="w-4 h-4 shrink-0" />
                   <span>Aprende con nosotros</span>
                 </span>
 
                 <div className="space-y-2.5">
-                  <h2 className="font-display text-2xl sm:text-3xl font-bold text-[var(--text-primary)] tracking-tight leading-tight text-balance">
-                    ¿Qué es el punto de equilibrio?{' '}
-                    <em className="font-editorial italic font-semibold text-[var(--accent-strong)]">
-                      En un minuto.
-                    </em>
+                  <h2 className="font-display text-2xl sm:text-3xl font-extrabold text-[var(--text-primary)] tracking-tight leading-tight text-balance">
+                    <EditorialText text="¿Qué es el punto de equilibrio? *En un minuto.*" />
                   </h2>
                   <p className="text-sm sm:text-base text-[var(--text-secondary)] leading-relaxed">
                     Si recién estás conociendo Growy, parte por aquí. Te explicamos de forma simple y
@@ -578,15 +629,18 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                 </ul>
 
                 <div className="flex flex-wrap items-center gap-3 pt-1">
-                  <a
+                  <ChipLink
+                    variant="white"
+                    label="Probar *ejemplo*"
                     href="#punto-de-equilibrio"
-                    className="inline-flex items-center justify-center gap-2 min-h-[44px] px-5 py-2.5 rounded-full border border-[var(--sec-border)] bg-[var(--bg-surface)] hover:bg-[var(--sec-soft)] text-xs sm:text-sm font-semibold text-[var(--text-primary)] transition-colors whitespace-nowrap"
-                  >
-                    <span>Probar ejemplo interactivo</span>
-                  </a>
+                  />
                   <a
                     href="#equilibrio"
-                    className="inline-flex items-center justify-center gap-1.5 min-h-[44px] px-5 py-2.5 rounded-full bg-[var(--accent-btn)] hover:bg-[var(--accent-btn-hover)] text-[var(--accent-btn-text)] text-xs sm:text-sm font-bold transition-colors whitespace-nowrap"
+                    style={{
+                      backgroundColor: 'var(--btn-navy-bg)',
+                      color: 'var(--btn-navy-text)',
+                    }}
+                    className="inline-flex items-center justify-center gap-1.5 min-h-[44px] px-5 py-2.5 rounded-full hover:opacity-92 text-xs sm:text-sm font-bold transition-opacity whitespace-nowrap"
                   >
                     <span>Conocer Equilibrio</span>
                     <ArrowRight className="w-3.5 h-3.5" />
@@ -596,7 +650,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
 
               {/* Reproductor del video */}
               <div className="lg:col-span-7">
-                <div className="relative aspect-video rounded-[24px] overflow-hidden bg-[#101018] border border-[var(--sec-border)] shadow-lg">
+                <div className="relative aspect-video rounded-[28px] overflow-hidden bg-[#101018] border border-[var(--sec-border)] shadow-lg">
                   <video
                     ref={learnVideoRef}
                     src="/assets/aistudio/Video_Project_47975f9c.mp4"
@@ -635,7 +689,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                           Una explicación simple, en un minuto.
                         </p>
                       </div>
-                      <span className="inline-flex items-center gap-2.5 px-6 py-3 rounded-full bg-[var(--accent-btn)] group-hover:bg-[var(--accent-btn-hover)] text-[#1F1B2E] text-sm font-bold shadow-md transition-transform group-hover:scale-[1.03]">
+                      <span className="inline-flex items-center gap-2.5 px-6 py-3 rounded-full bg-[#F6A59E] group-hover:bg-[#ee928a] text-[#1F1B2E] text-sm font-bold shadow-md transition-transform group-hover:scale-[1.03]">
                         <Play className="w-4 h-4 fill-current" />
                         <span>Ver video ahora</span>
                       </span>
@@ -643,23 +697,23 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                   )}
                 </div>
               </div>
-            </div>
+            </GlassCard>
           </ScrollReveal>
         </section>
 
         {/* 3. QUÉ ES GROWY */}
         <section
           id="que-es-growy"
-          className="py-14 sm:py-20 max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 scroll-mt-20"
+          className="py-14 sm:py-20 max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 scroll-mt-24"
         >
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 lg:gap-14 items-start">
             <ScrollReveal className="lg:col-span-5 space-y-4">
-              <div className="flex items-center gap-2.5 text-xs font-semibold text-[var(--sec-text)]">
+              <div className="flex items-center gap-2.5 text-xs font-bold tracking-[0.06em] uppercase text-[var(--sec-text)]">
                 <DoodleSparkleMotif className="w-5 h-5 shrink-0" />
                 <span>{lc.whatIsEyebrow}</span>
               </div>
-              <h2 className="font-display text-3xl sm:text-4xl font-bold text-[var(--text-primary)] tracking-tight leading-tight text-balance">
-                {lc.whatIsTitle}
+              <h2 className="font-display text-3xl sm:text-4xl font-extrabold text-[var(--text-primary)] tracking-tight leading-tight text-balance">
+                <EditorialText text={lc.whatIsTitle} />
               </h2>
             </ScrollReveal>
 
@@ -669,78 +723,113 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               </p>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-                <div className="boho-card rounded-[28px] p-6 space-y-3">
+                <SolidCard interactive className="p-6 space-y-3">
                   <DoodleIdeaMotif className="w-9 h-9" />
-                  <h3 className="font-display text-xl font-bold text-[var(--text-primary)]">
+                  <h3 className="font-display text-xl font-extrabold text-[var(--text-primary)]">
                     {lc.whatIsPillar1Title}
                   </h3>
                   <p className="text-sm text-[var(--text-secondary)] leading-relaxed">
                     {lc.whatIsPillar1Desc}
                   </p>
-                </div>
+                </SolidCard>
 
-                <div className="boho-card rounded-[28px] p-6 space-y-3">
+                <SolidCard interactive className="p-6 space-y-3">
                   <DoodleSproutMotif className="w-9 h-9" />
-                  <h3 className="font-display text-xl font-bold text-[var(--text-primary)]">
+                  <h3 className="font-display text-xl font-extrabold text-[var(--text-primary)]">
                     {lc.whatIsPillar2Title}
                   </h3>
                   <p className="text-sm text-[var(--text-secondary)] leading-relaxed">
                     {lc.whatIsPillar2Desc}
                   </p>
-                </div>
+                </SolidCard>
               </div>
             </ScrollReveal>
           </div>
         </section>
 
+        {/* 3B. DOLORES REALES DE LA PYME (4.3) */}
+        <section className="pb-14 sm:pb-18 max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
+          <ScrollReveal>
+            <SolidCard
+              radius="lg"
+              className="p-6 sm:p-10 border-[var(--accent-soft-border)] bg-[var(--accent-soft)]/35 space-y-6"
+            >
+              <SectionTitle
+                eyebrow={lc.painEyebrow}
+                title={lc.painTitle}
+                rightSlot={
+                  <ChipLink
+                    variant="white"
+                    label="Probar en la *calculadora*"
+                    href="#punto-de-equilibrio"
+                  />
+                }
+              />
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {painPointsList.map((pain, idx) => (
+                  <div
+                    key={idx}
+                    className="p-5 rounded-[24px] bg-[var(--bg-surface)] border border-[var(--border-hairline)] flex items-start gap-3"
+                  >
+                    <AlertCircle className="w-4 h-4 text-[var(--accent-strong)] shrink-0 mt-0.5" />
+                    <p className="text-xs sm:text-sm text-[var(--text-secondary)] leading-relaxed">
+                      {pain}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </SolidCard>
+          </ScrollReveal>
+        </section>
+
         {/* 4. SECCIÓN EDUCATIVA: PRIMERO, LOS CIMIENTOS: ¿QUÉ ES EL PUNTO DE EQUILIBRIO? */}
         <section
           id="punto-de-equilibrio"
-          className="py-16 sm:py-22 bg-[var(--sec-soft)]/55 border-y border-[var(--border-hairline)] scroll-mt-20"
+          className="py-16 sm:py-22 bg-[var(--sec-soft)]/45 border-y border-[var(--border-hairline)] scroll-mt-24"
         >
           <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 space-y-12">
             {/* Qué es */}
-            <ScrollReveal className="max-w-3xl space-y-3.5">
-              <p className="text-xs font-semibold text-[var(--sec-text)]">
-                {lc.breakevenEyebrow}
-              </p>
-              <h2 className="font-display text-3xl sm:text-4xl font-bold text-[var(--text-primary)] tracking-tight leading-tight text-balance">
-                {lc.breakevenTitle}
-              </h2>
-              <p className="text-base sm:text-lg text-[var(--text-secondary)] leading-relaxed">
-                {lc.breakevenDefinition}
-              </p>
+            <ScrollReveal className="max-w-3xl">
+              <SectionTitle
+                eyebrow={lc.breakevenEyebrow}
+                title={`Primero, los *cimientos*: ${lc.breakevenTitle}`}
+                subtitle={lc.breakevenDefinition}
+                size="lg"
+              />
             </ScrollReveal>
 
             {/* Por qué es tan importante + Los tres números simples */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-              <ScrollReveal className="lg:col-span-5 boho-card rounded-[28px] p-6 sm:p-8 space-y-4">
-                <h3 className="font-display text-xl sm:text-2xl font-bold text-[var(--text-primary)]">
-                  {lc.breakevenImportanceTitle}
-                </h3>
-                <ul className="space-y-3.5 text-sm text-[var(--text-secondary)] leading-relaxed">
-                  {importancePoints.map((point) => (
-                    <li key={point} className="flex items-start gap-3">
-                      <span className="w-5 h-5 rounded-full bg-[var(--pos-soft)] border border-[var(--pos-border)] flex items-center justify-center shrink-0 mt-0.5">
-                        <Check className="w-3 h-3 text-[var(--pos-text)]" strokeWidth={2.5} />
-                      </span>
-                      <span>{point}</span>
-                    </li>
-                  ))}
-                </ul>
+              <ScrollReveal className="lg:col-span-5">
+                <SolidCard radius="lg" className="p-6 sm:p-8 space-y-4">
+                  <h3 className="font-display text-xl sm:text-2xl font-extrabold text-[var(--text-primary)]">
+                    {lc.breakevenImportanceTitle}
+                  </h3>
+                  <ul className="space-y-3.5 text-sm text-[var(--text-secondary)] leading-relaxed">
+                    {importancePoints.map((point) => (
+                      <li key={point} className="flex items-start gap-3">
+                        <span className="w-5 h-5 rounded-full bg-[var(--pos-soft)] border border-[var(--pos-border)] flex items-center justify-center shrink-0 mt-0.5">
+                          <Check className="w-3 h-3 text-[var(--pos-text)]" strokeWidth={2.5} />
+                        </span>
+                        <span>{point}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </SolidCard>
               </ScrollReveal>
 
               <ScrollReveal className="lg:col-span-7 space-y-5" delay={0.05}>
-                <h3 className="font-display text-xl sm:text-2xl font-bold text-[var(--text-primary)]">
+                <h3 className="font-display text-xl sm:text-2xl font-extrabold text-[var(--text-primary)]">
                   {lc.breakevenPillarsTitle}
                 </h3>
 
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                   <div className="p-5 rounded-[24px] bg-[var(--bg-surface)] border border-[var(--border-hairline)] space-y-2">
-                    <span className="font-mono text-xs font-semibold text-[var(--accent-strong)]">
+                    <span className="font-mono text-xs font-bold text-[var(--accent-strong)]">
                       01
                     </span>
-                    <h4 className="font-display text-lg font-bold text-[var(--text-primary)]">
+                    <h4 className="font-display text-lg font-extrabold text-[var(--text-primary)]">
                       {lc.breakevenFixedTitle}
                     </h4>
                     <p className="text-xs sm:text-sm text-[var(--text-secondary)] leading-relaxed">
@@ -749,10 +838,10 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                   </div>
 
                   <div className="p-5 rounded-[24px] bg-[var(--bg-surface)] border border-[var(--border-hairline)] space-y-2">
-                    <span className="font-mono text-xs font-semibold text-[var(--sec-text)]">
+                    <span className="font-mono text-xs font-bold text-[var(--sec-text)]">
                       02
                     </span>
-                    <h4 className="font-display text-lg font-bold text-[var(--text-primary)]">
+                    <h4 className="font-display text-lg font-extrabold text-[var(--text-primary)]">
                       {lc.breakevenVariableTitle}
                     </h4>
                     <p className="text-xs sm:text-sm text-[var(--text-secondary)] leading-relaxed">
@@ -761,10 +850,10 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                   </div>
 
                   <div className="p-5 rounded-[24px] bg-[var(--bg-surface)] border border-[var(--border-hairline)] space-y-2">
-                    <span className="font-mono text-xs font-semibold text-[var(--pos-text)]">
+                    <span className="font-mono text-xs font-bold text-[var(--pos-text)]">
                       03
                     </span>
-                    <h4 className="font-display text-lg font-bold text-[var(--text-primary)]">
+                    <h4 className="font-display text-lg font-extrabold text-[var(--text-primary)]">
                       {lc.breakevenPriceTitle}
                     </h4>
                     <p className="text-xs sm:text-sm text-[var(--text-secondary)] leading-relaxed">
@@ -775,7 +864,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
 
                 {/* De la realidad a la proyección */}
                 <div className="p-6 rounded-[24px] bg-[var(--bg-surface)] border border-[var(--sec-border)] space-y-2">
-                  <p className="text-xs font-semibold text-[var(--sec-text)]">
+                  <p className="text-xs font-bold tracking-[0.04em] uppercase text-[var(--sec-text)]">
                     De la realidad a la proyección
                   </p>
                   <p className="text-sm text-[var(--text-primary)] leading-relaxed">
@@ -788,15 +877,11 @@ export const LandingPage: React.FC<LandingPageProps> = ({
             {/* Ejemplo visual con gráfico */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-center">
               <ScrollReveal className="lg:col-span-5 space-y-4">
-                <p className="text-xs font-semibold text-[var(--warn-text)]">
-                  Ejemplo visual
-                </p>
-                <h3 className="font-display text-2xl sm:text-3xl font-bold text-[var(--text-primary)] tracking-tight text-balance">
-                  {lc.breakevenExampleTitle}
-                </h3>
-                <p className="text-sm sm:text-base text-[var(--text-secondary)] leading-relaxed">
-                  {lc.breakevenExampleBody}
-                </p>
+                <SectionTitle
+                  eyebrow="Ejemplo visual"
+                  title={lc.breakevenExampleTitle}
+                  subtitle={lc.breakevenExampleBody}
+                />
               </ScrollReveal>
 
               <ScrollReveal className="lg:col-span-7" delay={0.05}>
@@ -804,10 +889,23 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               </ScrollReveal>
             </div>
 
+            {/* Calculadora pública interactiva sin login */}
+            <ScrollReveal>
+              <PublicBreakEvenCalculator
+                isSignedIn={isSignedIn}
+                authLoading={authLoading}
+                onOpenPrivacy={() => setLegalModal('privacy')}
+                onSaveAndContinue={(draft) => {
+                  savePublicBreakEvenDraft(draft);
+                  onLoginClick();
+                }}
+              />
+            </ScrollReveal>
+
             {/* Frase de cierre destacada */}
             <ScrollReveal className="text-center max-w-3xl mx-auto pt-2 space-y-2.5">
               <DoodleSparkleMotif className="w-7 h-7 mx-auto" />
-              <blockquote className="font-editorial italic text-2xl sm:text-3xl font-semibold text-[var(--text-primary)] text-balance leading-snug">
+              <blockquote className="growy-editorial-phrase text-2xl sm:text-3xl text-[var(--text-primary)] text-balance leading-snug">
                 &ldquo;{lc.breakevenClosingQuote}&rdquo;
               </blockquote>
             </ScrollReveal>
@@ -817,7 +915,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
         {/* 5. NUESTRO PRIMER PRODUCTO: EQUILIBRIO */}
         <section
           id="equilibrio"
-          className="py-16 sm:py-22 max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 space-y-10 scroll-mt-20"
+          className="py-16 sm:py-22 max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 space-y-10 scroll-mt-24"
         >
           <ScrollReveal>
             <ProductShowcaseCard
@@ -825,15 +923,21 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               title={lc.equilibrioTitle}
               subtitle={lc.equilibrioSubtitle}
               features={equilibrioFeatures}
-              priceLabel={config.priceLabel}
+              priceLabel={config.priceLabel || `${planSummary.monthlyPriceFormatted} / mes`}
               priceNote={config.currencyNote}
               ctaLabel={lc.equilibrioCtaLabel}
               paymentUrl={config.paymentUrl}
-              annualPriceLabel="$50.000 / año"
-              annualPriceNote="12 meses completos (ahorras $21.880). Al vencer el año se bloquea hasta renovar mensual o anual."
-              annualCtaLabel="Plan anual ($50.000 / año)"
+              annualPriceLabel={`${planSummary.annualPriceFormatted} / año`}
+              annualPriceNote={planSummary.anchorComparisonText}
+              annualCtaLabel={`Plan anual (${planSummary.annualPriceFormatted} / año)`}
               annualPaymentUrl={config.annualPaymentUrl || config.paymentUrl}
+              annualBadgeLabel={planSummary.annualHighlightBadge}
+              priceComparisonText={lc.priceComparisonText}
+              refundGuaranteeText={config.refundGuaranteeText}
               trustNote={lc.equilibrioTrustNote}
+              onPaymentCtaClick={(planType) =>
+                trackFunnelStepOncePerSession('payment', { source: 'landing', planType })
+              }
               iconSrc="/assets/aistudio/equilibrio-chispa-claro_8dfad465.svg"
               secondaryAction={{
                 label: isSignedIn
@@ -846,39 +950,166 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               }}
               mockupSlot={<EquilibrioProductMockup />}
             />
+            {onTryDemo && !isSignedIn && (
+              <div className="mt-5 flex flex-wrap items-center justify-center gap-3 text-center">
+                <span className="text-xs text-[var(--text-secondary)]">
+                  ¿Prefieres recorrer Equilibrio por dentro antes de entrar?
+                </span>
+                <ChipLink
+                  variant="sage"
+                  label="Explorar *demo* de Cafetería & Repostería"
+                  onClick={onTryDemo}
+                />
+              </div>
+            )}
           </ScrollReveal>
         </section>
+
+        {/* 5B. PRIVACIDAD DE TUS DATOS Y SOPORTE HUMANO (4.1) */}
+        <section
+          id="confianza"
+          className="pb-16 sm:pb-20 max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 scroll-mt-24"
+        >
+          <ScrollReveal>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <SolidCard
+                radius="lg"
+                className="p-6 sm:p-8 space-y-3 border-[var(--pos-border)] bg-[var(--pos-soft)]/35"
+              >
+                <div className="flex items-center gap-2.5 text-xs font-bold tracking-[0.04em] uppercase text-[var(--pos-text)]">
+                  <Lock className="w-4 h-4 shrink-0" />
+                  <span>Resguardo en Firebase · Sin acceso a tu banco</span>
+                </div>
+                <h3 className="font-display text-2xl font-extrabold text-[var(--text-primary)] tracking-tight">
+                  {lc.privacyTitle}
+                </h3>
+                <p className="text-sm text-[var(--text-secondary)] leading-relaxed">
+                  {lc.privacyBody}
+                </p>
+                <div className="pt-1 flex flex-wrap items-center gap-3 text-xs text-[var(--pos-text)] font-semibold">
+                  <span className="inline-flex items-center gap-1.5">
+                    <ShieldCheck className="w-4 h-4" />
+                    <span>Nunca pedimos claves bancarias ni SII</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setLegalModal('privacy')}
+                    className="underline font-bold cursor-pointer"
+                  >
+                    Ver política de privacidad
+                  </button>
+                </div>
+              </SolidCard>
+
+              <SolidCard radius="lg" className="p-6 sm:p-8 space-y-4">
+                <div className="flex items-center gap-2.5 text-xs font-bold tracking-[0.04em] uppercase text-[var(--sec-text)]">
+                  <UserCheck className="w-4 h-4 shrink-0" />
+                  <span>Acompañamiento real en Chile</span>
+                </div>
+                <h3 className="font-display text-2xl font-extrabold text-[var(--text-primary)] tracking-tight">
+                  {lc.supportHumanTitle}
+                </h3>
+                <p className="text-sm text-[var(--text-secondary)] leading-relaxed">
+                  {lc.supportHumanBody}
+                </p>
+                <div className="flex flex-wrap items-center gap-3 pt-1">
+                  {whatsappHref && (
+                    <ChipLink
+                      variant="sage"
+                      label="Escribir por *WhatsApp*"
+                      href={whatsappHref}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    />
+                  )}
+                  <a
+                    href="#contacto"
+                    className="inline-flex items-center justify-center gap-2 min-h-[44px] px-5 py-2 rounded-full border border-[var(--sec-border)] bg-[var(--bg-soft-alt)] hover:bg-[var(--sec-soft)] text-xs font-semibold text-[var(--text-primary)] transition-colors whitespace-nowrap"
+                  >
+                    <Mail className="w-3.5 h-3.5" />
+                    <span>Enviar mensaje por correo</span>
+                  </a>
+                </div>
+              </SolidCard>
+            </div>
+          </ScrollReveal>
+        </section>
+
+        {/* 5C. TESTIMONIOS Y CASOS REALES (4.2 — Solo se muestra si existen testimonios aprobados con permiso) */}
+        {approvedTestimonials.length > 0 && (
+          <section
+            id="testimonios"
+            className="pb-16 sm:pb-20 max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 space-y-6 scroll-mt-24"
+          >
+            <ScrollReveal>
+              <SectionTitle
+                eyebrow="Historias reales con Equilibrio"
+                title="Lo que cuentan quienes ya *ordenaron* sus números"
+              />
+            </ScrollReveal>
+
+            <StaggerSection inView className="grid grid-cols-1 md:grid-cols-3 gap-5">
+              {approvedTestimonials.map((t) => (
+                <StaggerItem key={t.id}>
+                  <SolidCard
+                    as="article"
+                    interactive
+                    className="p-6 h-full flex flex-col justify-between gap-4"
+                  >
+                    <div className="space-y-3">
+                      <Quote className="w-5 h-5 text-[var(--accent-strong)]" />
+                      <p className="text-sm text-[var(--text-primary)] leading-relaxed">
+                        &ldquo;{t.quote}&rdquo;
+                      </p>
+                      {t.resultHighlight && (
+                        <p className="inline-flex items-center px-3 py-1 rounded-full bg-[var(--pos-soft)] border border-[var(--pos-border)] text-[11px] font-bold text-[var(--pos-text)]">
+                          {t.resultHighlight}
+                        </p>
+                      )}
+                    </div>
+                    <div className="pt-3 border-t border-[var(--border-hairline)] text-xs">
+                      <p className="font-bold text-[var(--text-primary)]">{t.name}</p>
+                      <p className="text-[var(--text-secondary)]">
+                        {t.businessName}
+                        {t.city ? ` · ${t.city}` : ''}
+                      </p>
+                    </div>
+                  </SolidCard>
+                </StaggerItem>
+              ))}
+            </StaggerSection>
+          </section>
+        )}
 
         {/* 6. PRÓXIMAMENTE */}
         <section
           id="proximamente"
-          className="py-14 sm:py-20 bg-[var(--sec-soft)]/45 border-y border-[var(--border-hairline)] scroll-mt-20"
+          className="py-14 sm:py-20 bg-[var(--sec-soft)]/45 border-y border-[var(--border-hairline)] scroll-mt-24"
         >
           <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 space-y-10">
-            <ScrollReveal className="max-w-2xl space-y-3">
-              <p className="text-xs font-semibold text-[var(--sec-text)]">
-                {lc.upcomingEyebrow}
-              </p>
-              <h2 className="font-display text-3xl sm:text-4xl font-bold text-[var(--text-primary)] tracking-tight text-balance">
-                {lc.upcomingTitle}
-              </h2>
-              <p className="text-sm sm:text-base text-[var(--text-secondary)] leading-relaxed">
-                {lc.upcomingSubtitle}
-              </p>
+            <ScrollReveal className="max-w-2xl">
+              <SectionTitle
+                eyebrow={lc.upcomingEyebrow}
+                title={lc.upcomingTitle}
+                subtitle={lc.upcomingSubtitle}
+                size="lg"
+              />
             </ScrollReveal>
 
             <StaggerSection inView className="grid grid-cols-1 sm:grid-cols-3 gap-5">
-              {[0, 1, 2].map((idx) => (
+              {[
+                'Innovación y creatividad aplicada',
+                'Automatización de procesos diarios',
+                'Nuevas herramientas en camino',
+              ].map((hint, idx) => (
                 <StaggerItem key={idx}>
                   <div className="p-7 rounded-[28px] bg-[var(--bg-surface)] border border-dashed border-[var(--sec-border)] flex flex-col items-start justify-between gap-6 h-full min-h-[156px]">
                     <DoodleSparkleMotif className="w-7 h-7" />
                     <div className="space-y-1">
-                      <p className="font-display text-xl font-bold text-[var(--text-primary)]">
+                      <p className="font-display text-xl font-extrabold text-[var(--text-primary)]">
                         Próximamente
                       </p>
-                      <p className="text-xs text-[var(--text-secondary)]">
-                        Nueva herramienta dentro de Growy
-                      </p>
+                      <p className="text-xs text-[var(--text-secondary)]">{hint}</p>
                     </div>
                   </div>
                 </StaggerItem>
@@ -889,10 +1120,10 @@ export const LandingPage: React.FC<LandingPageProps> = ({
             <ScrollReveal>
               <form
                 onSubmit={handleNotifySubmit}
-                className="p-6 rounded-[28px] bg-[var(--bg-surface)] border border-[var(--border-hairline)] flex flex-col md:flex-row md:items-center justify-between gap-4"
+                className="p-6 rounded-[28px] bg-[var(--bg-surface)] border border-[var(--border-hairline)] flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-[var(--glass-shadow)]"
               >
                 <div className="space-y-1">
-                  <p className="text-sm font-semibold text-[var(--text-primary)]">
+                  <p className="text-sm font-bold text-[var(--text-primary)]">
                     ¿Quieres enterarte cuando sumemos nuevas herramientas?
                   </p>
                   <p className="text-xs text-[var(--text-secondary)]">
@@ -923,7 +1154,11 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                   <button
                     type="submit"
                     disabled={notifySending}
-                    className="inline-flex items-center justify-center gap-2 min-h-[44px] px-6 rounded-full bg-[var(--sec-soft)] hover:opacity-90 border border-[var(--sec-border)] text-[var(--sec-text)] text-xs font-bold cursor-pointer whitespace-nowrap disabled:opacity-60"
+                    style={{
+                      backgroundColor: 'var(--btn-navy-bg)',
+                      color: 'var(--btn-navy-text)',
+                    }}
+                    className="inline-flex items-center justify-center gap-2 min-h-[44px] px-6 rounded-full hover:opacity-92 text-xs font-bold cursor-pointer whitespace-nowrap disabled:opacity-60 transition-opacity"
                   >
                     <Mail className="w-3.5 h-3.5" />
                     <span>{notifySending ? 'Guardando...' : 'Avisarme'}</span>
@@ -937,13 +1172,13 @@ export const LandingPage: React.FC<LandingPageProps> = ({
         {/* 7. QUIÉN ESTÁ DETRÁS DE GROWY (franja oscura #1F1B2E + historia de José Ignacia) */}
         <section
           id="creador"
-          className="py-16 sm:py-22 max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 space-y-10 scroll-mt-20"
+          className="py-16 sm:py-22 max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 space-y-10 scroll-mt-24"
         >
           {/* Franja oscura (#1F1B2E) con cita en Fraunces cursiva y botón Conocer la historia */}
           <ScrollReveal>
-            <div className="rounded-[32px] bg-[#1F1B2E] text-white px-7 py-8 sm:px-10 sm:py-9 flex flex-col lg:flex-row lg:items-center justify-between gap-6 shadow-sm">
+            <div className="growy-editorial-strip rounded-[36px] px-7 py-8 sm:px-10 sm:py-9 flex flex-col lg:flex-row lg:items-center justify-between gap-6 shadow-sm">
               <div className="space-y-2 max-w-2xl">
-                <blockquote className="font-editorial italic text-xl sm:text-2xl lg:text-[1.75rem] font-semibold leading-snug text-white text-balance">
+                <blockquote className="growy-editorial-phrase text-xl sm:text-2xl lg:text-[1.75rem] leading-snug text-white text-balance">
                   &ldquo;{lc.breakevenClosingQuote}&rdquo;
                 </blockquote>
                 <p className="text-xs sm:text-sm text-[#CFC5EE] font-medium">
@@ -952,7 +1187,11 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               </div>
               <a
                 href="#historia-creador"
-                className="inline-flex items-center justify-center min-h-[46px] px-7 py-3 rounded-full bg-[var(--accent-btn)] hover:bg-[var(--accent-btn-hover)] text-[#1F1B2E] text-sm font-bold transition-colors whitespace-nowrap shrink-0 self-start lg:self-center"
+                style={{
+                  backgroundColor: 'var(--accent-coral)',
+                  color: 'var(--navy-ink)',
+                }}
+                className="inline-flex items-center justify-center min-h-[46px] px-7 py-3 rounded-full hover:opacity-92 text-sm font-bold transition-opacity whitespace-nowrap shrink-0 self-start lg:self-center"
               >
                 {lc.creatorQuoteCta}
               </a>
@@ -961,18 +1200,15 @@ export const LandingPage: React.FC<LandingPageProps> = ({
 
           {/* Historia de José Ignacia */}
           <ScrollReveal>
-            <div
-              id="historia-creador"
-              className="boho-card rounded-[32px] p-7 sm:p-11 space-y-6 scroll-mt-24"
-            >
+            <GlassCard id="historia-creador" radius="lg" className="p-7 sm:p-11 space-y-6 scroll-mt-24">
               <div className="space-y-2 max-w-3xl">
-                <p className="text-xs font-semibold text-[var(--sec-text)]">
+                <p className="text-xs font-bold tracking-[0.06em] uppercase text-[var(--sec-text)]">
                   {lc.creatorEyebrow}
                 </p>
-                <h2 className="font-display text-2xl sm:text-3xl font-bold text-[var(--text-primary)] tracking-tight leading-tight text-balance">
-                  {lc.creatorTitle}
+                <h2 className="font-display text-2xl sm:text-3xl font-extrabold text-[var(--text-primary)] tracking-tight leading-tight text-balance">
+                  <EditorialText text={lc.creatorTitle} />
                 </h2>
-                <p className="text-sm font-medium text-[var(--pos-text)]">
+                <p className="text-sm font-semibold text-[var(--pos-text)]">
                   {lc.creatorName} · {lc.creatorRole}
                 </p>
               </div>
@@ -986,7 +1222,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               <p className="text-xs font-medium text-[var(--text-secondary)] pt-3 border-t border-[var(--border-hairline)]">
                 {lc.creatorClosingNote}
               </p>
-            </div>
+            </GlassCard>
           </ScrollReveal>
         </section>
 
@@ -994,32 +1230,77 @@ export const LandingPage: React.FC<LandingPageProps> = ({
           <GrowyDivider />
         </div>
 
+        {/* 7B. GUÍAS PARA PYMES / ESTRUCTURA BLOG (4.4) */}
+        <section
+          id="guias"
+          className="py-14 sm:py-18 max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 space-y-8 scroll-mt-24"
+        >
+          <SectionTitle
+            eyebrow="Guías prácticas para pymes · Blog"
+            title="Aprende en *simple* antes de decidir"
+            subtitle="Lecturas cortas sobre costos, precios, IVA en Chile y flujo de caja escritas sin jerga."
+          />
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+            {BLOG_POSTS.map((post) => (
+              <SolidCard
+                key={post.id}
+                as="article"
+                interactive
+                className="p-6 flex flex-col justify-between gap-4"
+              >
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between gap-2 text-[11px]">
+                    <span className="px-3 py-1 rounded-full bg-[var(--sec-soft)] border border-[var(--sec-border)] font-bold text-[var(--sec-text)]">
+                      {post.category}
+                    </span>
+                    <span className="font-mono text-[var(--text-secondary)]">
+                      {post.readingTime}
+                    </span>
+                  </div>
+                  <h3 className="font-display text-lg font-extrabold text-[var(--text-primary)] leading-snug">
+                    {post.title}
+                  </h3>
+                  <p className="text-xs sm:text-sm text-[var(--text-secondary)] leading-relaxed">
+                    {post.excerpt}
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setSelectedBlogPost(post)}
+                  className="inline-flex items-center gap-1.5 text-xs font-bold text-[var(--accent-strong)] hover:underline cursor-pointer self-start min-h-[38px]"
+                >
+                  <span>Leer guía completa</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+              </SolidCard>
+            ))}
+          </div>
+        </section>
+
         {/* 8. PREGUNTAS FRECUENTES */}
         <section
           id="faq"
-          className="py-16 sm:py-22 max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 space-y-8 scroll-mt-20"
+          className="py-16 sm:py-22 max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 space-y-8 scroll-mt-24"
         >
-          <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
-            <div>
-              <p className="text-xs font-semibold text-[var(--sec-text)]">
-                Preguntas frecuentes
-              </p>
-              <h2 className="font-display text-3xl font-bold text-[var(--text-primary)] tracking-tight mt-1">
-                Claridad antes de empezar
-              </h2>
-            </div>
-
-            <div className="relative w-full md:w-72">
-              <Search className="w-4 h-4 text-[var(--text-secondary)] absolute left-4 top-1/2 -translate-y-1/2" />
-              <input
-                type="search"
-                placeholder="Buscar pregunta..."
-                value={faqQuery}
-                onChange={(e) => setFaqQuery(e.target.value)}
-                className="boho-input rounded-full w-full pl-10"
-              />
-            </div>
-          </div>
+          <SectionTitle
+            eyebrow="Preguntas frecuentes"
+            title="Claridad *antes* de empezar"
+            rightSlot={
+              <div className="relative w-full md:w-72">
+                <Search className="w-4 h-4 text-[var(--text-secondary)] absolute left-4 top-1/2 -translate-y-1/2" />
+                <input
+                  type="search"
+                  placeholder="Buscar pregunta..."
+                  aria-label="Buscar en preguntas frecuentes"
+                  value={faqQuery}
+                  onChange={(e) => setFaqQuery(e.target.value)}
+                  className="boho-input rounded-full w-full pl-10"
+                />
+              </div>
+            }
+          />
 
           <div className="flex flex-wrap gap-2">
             {(Object.keys(FAQ_CAT_LABELS) as Array<FaqCategory | 'all'>).map((cat) => (
@@ -1027,9 +1308,9 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                 key={cat}
                 type="button"
                 onClick={() => setFaqCat(cat)}
-                className={`min-h-[38px] px-4 py-1.5 rounded-full text-xs font-semibold border transition-colors cursor-pointer ${
+                className={`min-h-[40px] px-4 py-1.5 rounded-full text-xs font-semibold border transition-colors cursor-pointer ${
                   faqCat === cat
-                    ? 'bg-[var(--sec-soft)] border-[var(--sec-border)] text-[var(--sec-text)]'
+                    ? 'bg-[var(--btn-navy-bg)] border-[var(--btn-navy-bg)] text-[var(--btn-navy-text)]'
                     : 'bg-[var(--bg-surface)] border-[var(--border-hairline)] text-[var(--text-secondary)] hover:bg-[var(--bg-soft)]'
                 }`}
               >
@@ -1040,14 +1321,17 @@ export const LandingPage: React.FC<LandingPageProps> = ({
 
           <div className="space-y-3">
             {filteredFaqs.length === 0 ? (
-              <p className="boho-card p-6 text-sm text-[var(--text-secondary)] text-center">
+              <SolidCard className="p-6 text-sm text-[var(--text-secondary)] text-center">
                 No encontramos preguntas que coincidan con tu búsqueda.
-              </p>
+              </SolidCard>
             ) : (
               filteredFaqs.map((faq) => {
                 const isOpen = openFaqId === faq.id;
                 return (
-                  <div key={faq.id} className="boho-card rounded-[24px] overflow-hidden">
+                  <div
+                    key={faq.id}
+                    className="rounded-[24px] bg-[var(--bg-surface)] border border-[var(--border-hairline)] overflow-hidden"
+                  >
                     <button
                       type="button"
                       onClick={() => setOpenFaqId(isOpen ? null : faq.id)}
@@ -1089,7 +1373,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               type="button"
               onClick={() => setShowInstallGuide((prev) => !prev)}
               aria-expanded={showInstallGuide}
-              className="inline-flex items-center gap-2 text-xs font-semibold text-[var(--sec-text)] hover:underline cursor-pointer"
+              className="inline-flex items-center gap-2 text-xs font-semibold text-[var(--sec-text)] hover:underline cursor-pointer min-h-[36px]"
             >
               <Smartphone className="w-4 h-4" />
               <span>
@@ -1109,14 +1393,14 @@ export const LandingPage: React.FC<LandingPageProps> = ({
         {/* 9. CIERRE CON LLAMADA A LA ACCIÓN Y CONTACTO */}
         <section
           id="contacto"
-          className="py-16 sm:py-22 bg-[var(--sec-soft)]/50 border-t border-[var(--border-hairline)] scroll-mt-20"
+          className="py-16 sm:py-22 bg-[var(--sec-soft)]/45 border-t border-[var(--border-hairline)] scroll-mt-24"
         >
           <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 space-y-12">
             {/* Llamada a la acción de cierre */}
             <ScrollReveal className="text-center max-w-2xl mx-auto space-y-5">
               <DoodleSproutMotif className="w-10 h-10 mx-auto" />
-              <h2 className="font-display text-3xl sm:text-4xl font-bold text-[var(--text-primary)] tracking-tight text-balance">
-                {lc.closingTitle}
+              <h2 className="font-display text-3xl sm:text-4xl font-extrabold text-[var(--text-primary)] tracking-tight text-balance">
+                <EditorialText text={lc.closingTitle} />
               </h2>
               <p className="text-base text-[var(--text-secondary)] leading-relaxed">
                 {lc.closingSubtitle}
@@ -1124,7 +1408,11 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               <div className="flex flex-wrap items-center justify-center gap-3.5 pt-1">
                 <a
                   href="#equilibrio"
-                  className="inline-flex items-center justify-center gap-2 min-h-[48px] px-7 py-3 rounded-full bg-[var(--accent-btn)] hover:bg-[var(--accent-btn-hover)] text-[var(--accent-btn-text)] text-sm font-bold transition-colors whitespace-nowrap"
+                  style={{
+                    backgroundColor: 'var(--btn-navy-bg)',
+                    color: 'var(--btn-navy-text)',
+                  }}
+                  className="inline-flex items-center justify-center gap-2 min-h-[48px] px-7 py-3 rounded-full hover:opacity-92 text-sm font-bold transition-opacity whitespace-nowrap shadow-xs"
                 >
                   <span>{lc.closingCtaLabel}</span>
                   <ArrowRight className="w-4 h-4" />
@@ -1135,189 +1423,204 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                   disabled={authLoading}
                   className="inline-flex items-center justify-center min-h-[48px] px-6 py-3 rounded-full border border-[var(--sec-border)] bg-[var(--bg-surface)] hover:bg-[var(--sec-soft)] text-sm font-semibold text-[var(--text-primary)] transition-colors whitespace-nowrap cursor-pointer disabled:opacity-60"
                 >
-                  {isSignedIn ? 'Ir a mi cuenta' : 'Entrar con Google'}
+                  {isSignedIn ? 'Ir a mi cuenta' : 'Entrar con Google o correo'}
                 </button>
               </div>
             </ScrollReveal>
 
             {/* Formulario de contacto y soporte */}
             <ScrollReveal>
-              <form
-                onSubmit={handleContactSubmit}
-                className="max-w-3xl mx-auto boho-card rounded-[32px] p-6 sm:p-9 space-y-5"
-              >
-                <div className="space-y-1">
-                  <p className="text-xs font-semibold text-[var(--sec-text)]">
-                    Contacto directo
-                  </p>
-                  <h3 className="font-display text-2xl font-bold text-[var(--text-primary)]">
-                    ¿Tienes alguna duda o necesitas activar tu comprobante?
-                  </h3>
-                  <p className="text-xs sm:text-sm text-[var(--text-secondary)]">
-                    Escríbenos aquí y te responderemos directamente desde {config.contactEmail}.
-                  </p>
-                </div>
-
-                {contactFeedback && (
-                  <p
-                    className={`text-xs font-semibold p-3 rounded-2xl ${
-                      contactFeedback.type === 'ok'
-                        ? 'bg-[var(--pos-soft)] text-[var(--pos-text)]'
-                        : 'bg-[var(--danger-soft)] text-[var(--danger-text)]'
-                    }`}
-                  >
-                    {contactFeedback.text}
-                  </p>
-                )}
-
-                <div>
-                  <span className="block text-xs font-semibold mb-1.5 text-[var(--text-primary)]">
-                    Tipo de mensaje
-                  </span>
-                  <div className="grid grid-cols-3 gap-2 max-w-md">
-                    {(
-                      [
-                        { id: 'duda', label: 'Duda o consulta' },
-                        { id: 'problema', label: 'Soporte o pago' },
-                        { id: 'sugerencia', label: 'Sugerencia' },
-                      ] as const
-                    ).map((opt) => (
-                      <button
-                        key={opt.id}
-                        type="button"
-                        onClick={() => setContactType(opt.id)}
-                        className={`min-h-[40px] px-3 rounded-full text-xs font-semibold border transition-colors cursor-pointer ${
-                          contactType === opt.id
-                            ? 'bg-[var(--pos-soft)] border-[var(--pos-border)] text-[var(--pos-text)]'
-                            : 'bg-[var(--bg-surface)] border-[var(--border-hairline)] text-[var(--text-secondary)]'
-                        }`}
-                      >
-                        {opt.label}
-                      </button>
-                    ))}
+              <GlassCard radius="lg" className="max-w-3xl mx-auto p-6 sm:p-9">
+                <form onSubmit={handleContactSubmit} className="space-y-5">
+                  <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
+                    <div className="space-y-1">
+                      <p className="text-xs font-bold tracking-[0.04em] uppercase text-[var(--sec-text)]">
+                        Contacto directo humano
+                      </p>
+                      <h3 className="font-display text-2xl font-extrabold text-[var(--text-primary)]">
+                        ¿Tienes alguna duda o necesitas activar tu comprobante?
+                      </h3>
+                      <p className="text-xs sm:text-sm text-[var(--text-secondary)]">
+                        Escríbenos aquí y te responderemos directamente desde {config.contactEmail}.
+                      </p>
+                    </div>
+                    {whatsappHref && (
+                      <ChipLink
+                        variant="sage"
+                        label="WhatsApp *directo*"
+                        href={whatsappHref}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="self-start"
+                      />
+                    )}
                   </div>
-                </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-xs font-semibold mb-1">Tu nombre</label>
-                    <input
-                      type="text"
-                      value={contactName}
-                      onChange={(e) => setContactName(e.target.value)}
-                      className="boho-input w-full"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold mb-1">
-                      Tu correo electrónico
-                    </label>
-                    <input
-                      type="email"
-                      value={contactEmail}
-                      onChange={(e) => setContactEmail(e.target.value)}
-                      className="boho-input w-full"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold mb-1">Asunto</label>
-                  <input
-                    type="text"
-                    placeholder="Ej. Consulta sobre Equilibrio o activación de compra"
-                    value={contactSubject}
-                    onChange={(e) => setContactSubject(e.target.value)}
-                    className="boho-input w-full"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold mb-1">Mensaje</label>
-                  <textarea
-                    rows={3}
-                    value={contactMsg}
-                    onChange={(e) => setContactMsg(e.target.value)}
-                    className="boho-input w-full py-2.5"
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <span className="text-xs font-semibold">
-                      Adjuntar comprobante o imagen (opcional, máx. {MAX_SUPPORT_ATTACHMENTS})
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => contactFileRef.current?.click()}
-                      disabled={contactAttachments.length >= MAX_SUPPORT_ATTACHMENTS}
-                      className="inline-flex items-center gap-1.5 min-h-[38px] px-4 rounded-full border border-[var(--border-hairline)] bg-[var(--bg-surface)] hover:bg-[var(--bg-soft)] text-xs font-semibold cursor-pointer disabled:opacity-50"
+                  {contactFeedback && (
+                    <p
+                      className={`text-xs font-semibold p-3 rounded-2xl ${
+                        contactFeedback.type === 'ok'
+                          ? 'bg-[var(--pos-soft)] text-[var(--pos-text)]'
+                          : 'bg-[var(--danger-soft)] text-[var(--danger-text)]'
+                      }`}
                     >
-                      <Paperclip className="w-3.5 h-3.5" />
-                      <span>Adjuntar imagen o PDF</span>
-                    </button>
-                    <input
-                      ref={contactFileRef}
-                      type="file"
-                      accept="image/*,.pdf"
-                      multiple
-                      onChange={handleContactFiles}
-                      className="hidden"
-                    />
-                  </div>
-
-                  {contactAttachError && (
-                    <p className="text-xs font-semibold text-[var(--danger-text)]">
-                      {contactAttachError}
+                      {contactFeedback.text}
                     </p>
                   )}
 
-                  {contactAttachments.length > 0 && (
-                    <div className="space-y-1.5">
-                      {contactAttachments.map((att, idx) => (
-                        <div
-                          key={`${att.name}-${idx}`}
-                          className="flex items-center justify-between gap-2 px-3 py-2 rounded-xl border border-[var(--border-hairline)] text-xs"
+                  <div>
+                    <span className="block text-xs font-semibold mb-1.5 text-[var(--text-primary)]">
+                      Tipo de mensaje
+                    </span>
+                    <div className="grid grid-cols-3 gap-2 max-w-md">
+                      {(
+                        [
+                          { id: 'duda', label: 'Duda o consulta' },
+                          { id: 'problema', label: 'Soporte o pago' },
+                          { id: 'sugerencia', label: 'Sugerencia' },
+                        ] as const
+                      ).map((opt) => (
+                        <button
+                          key={opt.id}
+                          type="button"
+                          onClick={() => setContactType(opt.id)}
+                          className={`min-h-[40px] px-3 rounded-full text-xs font-semibold border transition-colors cursor-pointer ${
+                            contactType === opt.id
+                              ? 'bg-[var(--btn-navy-bg)] border-[var(--btn-navy-bg)] text-[var(--btn-navy-text)]'
+                              : 'bg-[var(--bg-surface)] border-[var(--border-hairline)] text-[var(--text-secondary)]'
+                          }`}
                         >
-                          <div className="flex items-center gap-2 min-w-0">
-                            <FileText className="w-4 h-4 shrink-0" />
-                            <span className="truncate font-medium">{att.name}</span>
-                            <span className="text-[11px] font-mono opacity-75 shrink-0">
-                              ({formatAttachmentSize(att.sizeBytes)})
-                            </span>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setContactAttachments((prev) => prev.filter((_, i) => i !== idx))
-                            }
-                            aria-label={`Quitar ${att.name}`}
-                            className="min-w-[32px] min-h-[32px] flex items-center justify-center rounded-xl text-[var(--danger-text)] cursor-pointer"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
+                          {opt.label}
+                        </button>
                       ))}
                     </div>
-                  )}
-                </div>
+                  </div>
 
-                <button
-                  type="submit"
-                  disabled={contactSending}
-                  className="inline-flex items-center justify-center gap-2 min-h-[46px] px-7 py-2.5 rounded-full bg-[#1F1B2E] text-white dark:bg-[var(--accent-btn)] dark:text-[#1F1B2E] text-sm font-bold transition-colors cursor-pointer disabled:opacity-60 hover:opacity-90"
-                >
-                  <Send className="w-4 h-4" />
-                  <span>{contactSending ? 'Enviando...' : 'Enviar mensaje'}</span>
-                </button>
-              </form>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-semibold mb-1">Tu nombre</label>
+                      <input
+                        type="text"
+                        value={contactName}
+                        onChange={(e) => setContactName(e.target.value)}
+                        className="boho-input w-full"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold mb-1">
+                        Tu correo electrónico
+                      </label>
+                      <input
+                        type="email"
+                        value={contactEmail}
+                        onChange={(e) => setContactEmail(e.target.value)}
+                        className="boho-input w-full"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold mb-1">Asunto</label>
+                    <input
+                      type="text"
+                      placeholder="Ej. Consulta sobre Equilibrio o activación de compra"
+                      value={contactSubject}
+                      onChange={(e) => setContactSubject(e.target.value)}
+                      className="boho-input w-full"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold mb-1">Mensaje</label>
+                    <textarea
+                      rows={3}
+                      value={contactMsg}
+                      onChange={(e) => setContactMsg(e.target.value)}
+                      className="boho-input w-full py-2.5"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="text-xs font-semibold">
+                        Adjuntar comprobante o imagen (opcional, máx. {MAX_SUPPORT_ATTACHMENTS})
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => contactFileRef.current?.click()}
+                        disabled={contactAttachments.length >= MAX_SUPPORT_ATTACHMENTS}
+                        className="inline-flex items-center gap-1.5 min-h-[38px] px-4 rounded-full border border-[var(--border-hairline)] bg-[var(--bg-surface)] hover:bg-[var(--bg-soft)] text-xs font-semibold cursor-pointer disabled:opacity-50"
+                      >
+                        <Paperclip className="w-3.5 h-3.5" />
+                        <span>Adjuntar imagen o PDF</span>
+                      </button>
+                      <input
+                        ref={contactFileRef}
+                        type="file"
+                        accept="image/*,.pdf"
+                        multiple
+                        onChange={handleContactFiles}
+                        className="hidden"
+                      />
+                    </div>
+
+                    {contactAttachError && (
+                      <p className="text-xs font-semibold text-[var(--danger-text)]">
+                        {contactAttachError}
+                      </p>
+                    )}
+
+                    {contactAttachments.length > 0 && (
+                      <div className="space-y-1.5">
+                        {contactAttachments.map((att, idx) => (
+                          <div
+                            key={`${att.name}-${idx}`}
+                            className="flex items-center justify-between gap-2 px-3 py-2 rounded-xl border border-[var(--border-hairline)] text-xs bg-[var(--bg-surface)]"
+                          >
+                            <div className="flex items-center gap-2 min-w-0">
+                              <FileText className="w-4 h-4 shrink-0" />
+                              <span className="truncate font-medium">{att.name}</span>
+                              <span className="text-[11px] font-mono opacity-75 shrink-0">
+                                ({formatAttachmentSize(att.sizeBytes)})
+                              </span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setContactAttachments((prev) => prev.filter((_, i) => i !== idx))
+                              }
+                              aria-label={`Quitar ${att.name}`}
+                              className="min-w-[32px] min-h-[32px] flex items-center justify-center rounded-xl text-[var(--danger-text)] cursor-pointer"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={contactSending}
+                    style={{
+                      backgroundColor: 'var(--btn-navy-bg)',
+                      color: 'var(--btn-navy-text)',
+                    }}
+                    className="inline-flex items-center justify-center gap-2 min-h-[46px] px-7 py-2.5 rounded-full text-sm font-bold transition-opacity cursor-pointer disabled:opacity-60 hover:opacity-92"
+                  >
+                    <Send className="w-4 h-4" />
+                    <span>{contactSending ? 'Enviando...' : 'Enviar mensaje'}</span>
+                  </button>
+                </form>
+              </GlassCard>
             </ScrollReveal>
           </div>
         </section>
       </main>
 
-      {/* PIE DE PÁGINA CON TÉRMINOS Y PRIVACIDAD */}
-      <footer className="border-t border-[var(--border-hairline)] py-8 bg-[var(--bg-canvas)]">
+      {/* PIE DE PÁGINA CON TÉRMINOS Y PRIVACIDAD (espacio inferior en móvil para el dock flotante) */}
+      <footer className="relative z-10 border-t border-[var(--border-hairline)] pt-8 pb-28 md:pb-8 bg-[var(--bg-canvas)]">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-[var(--text-secondary)]">
           <div className="flex flex-col sm:flex-row items-center gap-3 sm:gap-4">
             <GrowyLogoMark size="sm" showSlogan />
@@ -1358,10 +1661,10 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: 8, scale: 0.98 }}
               transition={{ duration: 0.22, ease: GROWY_EASE }}
-              className="w-full max-w-lg boho-card rounded-[28px] p-6 space-y-4 max-h-[85vh] overflow-y-auto"
+              className="w-full max-w-lg growy-solid rounded-[28px] p-6 space-y-4 max-h-[85vh] overflow-y-auto"
             >
               <div className="flex items-center justify-between">
-                <h3 className="font-display text-2xl font-bold">
+                <h3 className="font-display text-2xl font-extrabold">
                   {legalModal === 'privacy' ? 'Aviso de privacidad' : 'Términos de uso'}
                 </h3>
                 <button
@@ -1377,25 +1680,27 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                 <div className="text-sm text-[var(--text-secondary)] space-y-3 leading-relaxed">
                   <p>
                     Growy y su producto Equilibrio almacenan únicamente tu correo, nombre y los
-                    datos que registres voluntariamente dentro de tu cuenta autenticada en Google
-                    Cloud Firestore.
+                    datos que registres voluntariamente dentro de tu cuenta (ya sea ingresando con
+                    Google o con correo y contraseña) sobre Google Cloud Firestore.
                   </p>
                   <p>
                     Tus costos, productos, proyecciones y resultados reales son privados y están
-                    protegidos mediante reglas de seguridad por usuario (`ownerUid`). No vendemos ni
-                    compartimos tu información con terceros.
+                    protegidos mediante reglas de seguridad por usuario (`ownerUid`). Nunca te
+                    pedimos claves bancarias, ni del SII, ni vendemos tu información a terceros.
                   </p>
                   <p>
-                    Puedes exportar un respaldo completo en JSON o solicitar la eliminación de tu
-                    cuenta escribiendo a {config.contactEmail}.
+                    Para mejorar la claridad de la página, medimos únicamente conteos mínimos de
+                    embudo por sesión anónima sin cookies ni datos personales. Puedes exportar un
+                    respaldo completo en JSON o solicitar la eliminación de tu cuenta escribiendo a{' '}
+                    {config.contactEmail}.
                   </p>
                 </div>
               ) : (
                 <div className="text-sm text-[var(--text-secondary)] space-y-3 leading-relaxed">
                   <p>
                     Equilibrio de Growy se ofrece mediante pago a través de Mercado Pago (
-                    {config.priceLabel}), entregando acceso a sus herramientas en la web y como
-                    aplicación instalable.
+                    {config.priceLabel} o plan anual), entregando acceso a sus herramientas en la
+                    web y como aplicación instalable.
                   </p>
                   <p>
                     Los cálculos de punto de equilibrio, metas de venta y proyecciones se basan en
@@ -1410,6 +1715,90 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                 </div>
               )}
             </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Lector modal de artículos del Blog (#guias) */}
+      <AnimatePresence>
+        {selectedBlogPost && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.18 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="blog-reader-title"
+          >
+            <motion.article
+              initial={{ opacity: 0, y: 12, scale: 0.98 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 8, scale: 0.98 }}
+              transition={{ duration: 0.22, ease: GROWY_EASE }}
+              className="w-full max-w-2xl growy-solid rounded-[28px] p-6 sm:p-8 space-y-5 max-h-[85vh] overflow-y-auto"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="space-y-1.5">
+                  <div className="flex items-center gap-2 text-[11px]">
+                    <span className="px-3 py-1 rounded-full bg-[var(--sec-soft)] border border-[var(--sec-border)] font-bold text-[var(--sec-text)]">
+                      {selectedBlogPost.category}
+                    </span>
+                    <span className="font-mono text-[var(--text-secondary)]">
+                      {selectedBlogPost.readingTime}
+                    </span>
+                  </div>
+                  <h3
+                    id="blog-reader-title"
+                    className="font-display text-2xl sm:text-3xl font-extrabold text-[var(--text-primary)] tracking-tight leading-snug"
+                  >
+                    {selectedBlogPost.title}
+                  </h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSelectedBlogPost(null)}
+                  aria-label="Cerrar artículo"
+                  className="min-w-[42px] min-h-[42px] flex items-center justify-center rounded-full hover:bg-[var(--bg-soft)] cursor-pointer shrink-0"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="space-y-4 text-sm sm:text-base text-[var(--text-secondary)] leading-relaxed">
+                {selectedBlogPost.paragraphs.map((p, idx) => (
+                  <p key={idx}>{p}</p>
+                ))}
+              </div>
+
+              <div className="p-4 rounded-2xl bg-[var(--pos-soft)] border border-[var(--pos-border)] text-xs sm:text-sm text-[var(--text-primary)] leading-relaxed">
+                <strong className="text-[var(--pos-text)]">En resumen:</strong>{' '}
+                {selectedBlogPost.keyTakeaway}
+              </div>
+
+              <div className="pt-2 flex flex-wrap items-center justify-between gap-3 border-t border-[var(--border-hairline)]">
+                <a
+                  href="#punto-de-equilibrio"
+                  onClick={() => setSelectedBlogPost(null)}
+                  style={{
+                    backgroundColor: 'var(--btn-navy-bg)',
+                    color: 'var(--btn-navy-text)',
+                  }}
+                  className="inline-flex items-center gap-2 min-h-[42px] px-5 py-2 rounded-full hover:opacity-92 text-xs font-bold transition-opacity"
+                >
+                  <span>Probar en la calculadora gratis</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </a>
+                <button
+                  type="button"
+                  onClick={() => setSelectedBlogPost(null)}
+                  className="min-h-[42px] px-5 py-2 rounded-full border border-[var(--border-hairline)] text-xs font-semibold cursor-pointer hover:bg-[var(--bg-soft)]"
+                >
+                  Cerrar guía
+                </button>
+              </div>
+            </motion.article>
           </motion.div>
         )}
       </AnimatePresence>

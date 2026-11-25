@@ -79,7 +79,9 @@ service cloud.firestore {
         'upcomingEyebrow', 'upcomingTitle', 'upcomingSubtitle',
         'creatorEyebrow', 'creatorTitle', 'creatorName', 'creatorRole',
         'creatorPhotoUrl', 'creatorBio', 'creatorClosingNote', 'creatorQuoteCta',
-        'closingTitle', 'closingSubtitle', 'closingCtaLabel'
+        'closingTitle', 'closingSubtitle', 'closingCtaLabel',
+        'painEyebrow', 'painTitle', 'painPoints', 'priceComparisonText',
+        'privacyTitle', 'privacyBody', 'supportHumanTitle', 'supportHumanBody'
       ]) &&
       (!('heroEyebrow' in lc) || (lc.heroEyebrow is string && lc.heroEyebrow.size() <= 140)) &&
       (!('heroPrimaryCta' in lc) || (lc.heroPrimaryCta is string && lc.heroPrimaryCta.size() <= 80)) &&
@@ -132,7 +134,28 @@ service cloud.firestore {
       (!('creatorQuoteCta' in lc) || (lc.creatorQuoteCta is string && lc.creatorQuoteCta.size() <= 80)) &&
       (!('closingTitle' in lc) || (lc.closingTitle is string && lc.closingTitle.size() <= 220)) &&
       (!('closingSubtitle' in lc) || (lc.closingSubtitle is string && lc.closingSubtitle.size() <= 600)) &&
-      (!('closingCtaLabel' in lc) || (lc.closingCtaLabel is string && lc.closingCtaLabel.size() <= 100));
+      (!('closingCtaLabel' in lc) || (lc.closingCtaLabel is string && lc.closingCtaLabel.size() <= 100)) &&
+      (!('painEyebrow' in lc) || (lc.painEyebrow is string && lc.painEyebrow.size() <= 140)) &&
+      (!('painTitle' in lc) || (lc.painTitle is string && lc.painTitle.size() <= 220)) &&
+      (!('painPoints' in lc) || (lc.painPoints is string && lc.painPoints.size() <= 900)) &&
+      (!('priceComparisonText' in lc) || (lc.priceComparisonText is string && lc.priceComparisonText.size() <= 350)) &&
+      (!('privacyTitle' in lc) || (lc.privacyTitle is string && lc.privacyTitle.size() <= 180)) &&
+      (!('privacyBody' in lc) || (lc.privacyBody is string && lc.privacyBody.size() <= 700)) &&
+      (!('supportHumanTitle' in lc) || (lc.supportHumanTitle is string && lc.supportHumanTitle.size() <= 180)) &&
+      (!('supportHumanBody' in lc) || (lc.supportHumanBody is string && lc.supportHumanBody.size() <= 700));
+    }
+
+    function isValidTestimonial(t) {
+      return t is map &&
+        t.keys().hasAll(['id', 'name', 'businessName', 'quote', 'permissionGranted']) &&
+        t.keys().hasOnly(['id', 'name', 'businessName', 'city', 'quote', 'resultHighlight', 'permissionGranted']) &&
+        t.id is string && t.id.size() >= 1 && t.id.size() <= 80 &&
+        t.name is string && t.name.size() >= 1 && t.name.size() <= 100 &&
+        t.businessName is string && t.businessName.size() >= 1 && t.businessName.size() <= 120 &&
+        (!('city' in t) || (t.city is string && t.city.size() <= 80)) &&
+        t.quote is string && t.quote.size() >= 3 && t.quote.size() <= 600 &&
+        (!('resultHighlight' in t) || (t.resultHighlight is string && t.resultHighlight.size() <= 140)) &&
+        t.permissionGranted is bool;
     }
 
     function isValidAppConfig(data) {
@@ -142,17 +165,36 @@ service cloud.firestore {
         'announcementActive', 'updatedAt'
       ]) &&
       data.keys().hasOnly([
-        'paymentUrl', 'annualPaymentUrl', 'priceLabel', 'currencyNote', 'heroTitle', 'heroSubtitle',
-        'guaranteeText', 'contactEmail', 'welcomeMessage', 'announcementText',
+        'paymentUrl', 'annualPaymentUrl', 'monthlyPriceClp', 'annualPriceClp', 'mpRecurringEnabled',
+        'priceLabel', 'currencyNote', 'heroTitle', 'heroSubtitle',
+        'guaranteeText', 'refundGuaranteeText', 'whatsappUrl', 'testimonials',
+        'contactEmail', 'welcomeMessage', 'announcementText',
         'announcementActive', 'landingContent', 'updatedAt'
       ]) &&
       data.paymentUrl is string && data.paymentUrl.size() <= 500 &&
       (!('annualPaymentUrl' in data) || (data.annualPaymentUrl is string && data.annualPaymentUrl.size() <= 500)) &&
+      (!('monthlyPriceClp' in data) || (data.monthlyPriceClp is number && data.monthlyPriceClp >= 0 && data.monthlyPriceClp <= 10000000)) &&
+      (!('annualPriceClp' in data) || (data.annualPriceClp is number && data.annualPriceClp >= 0 && data.annualPriceClp <= 100000000)) &&
+      (!('mpRecurringEnabled' in data) || data.mpRecurringEnabled is bool) &&
       data.priceLabel is string && data.priceLabel.size() <= 60 &&
       data.currencyNote is string && data.currencyNote.size() <= 160 &&
       data.heroTitle is string && data.heroTitle.size() <= 160 &&
       data.heroSubtitle is string && data.heroSubtitle.size() <= 400 &&
       data.guaranteeText is string && data.guaranteeText.size() <= 400 &&
+      (!('refundGuaranteeText' in data) || (data.refundGuaranteeText is string && data.refundGuaranteeText.size() <= 500)) &&
+      (!('whatsappUrl' in data) || (data.whatsappUrl is string && data.whatsappUrl.size() <= 300)) &&
+      (!('testimonials' in data) || (
+        data.testimonials is list &&
+        data.testimonials.size() <= 8 &&
+        (data.testimonials.size() == 0 || isValidTestimonial(data.testimonials[0])) &&
+        (data.testimonials.size() <= 1 || isValidTestimonial(data.testimonials[1])) &&
+        (data.testimonials.size() <= 2 || isValidTestimonial(data.testimonials[2])) &&
+        (data.testimonials.size() <= 3 || isValidTestimonial(data.testimonials[3])) &&
+        (data.testimonials.size() <= 4 || isValidTestimonial(data.testimonials[4])) &&
+        (data.testimonials.size() <= 5 || isValidTestimonial(data.testimonials[5])) &&
+        (data.testimonials.size() <= 6 || isValidTestimonial(data.testimonials[6])) &&
+        (data.testimonials.size() <= 7 || isValidTestimonial(data.testimonials[7]))
+      )) &&
       data.contactEmail is string && data.contactEmail.size() <= 120 &&
       data.welcomeMessage is string && data.welcomeMessage.size() <= 400 &&
       data.announcementText is string && data.announcementText.size() <= 300 &&
@@ -185,7 +227,10 @@ service cloud.firestore {
       data.keys().hasOnly([
         'uid', 'email', 'displayName', 'role', 'accessStatus',
         'paymentStatus', 'planType', 'billingDay', 'nextPaymentDueAt', 'lastPaymentAt',
-        'accessCodeUsed', 'paymentReference', 'onboardingCompleted', 'createdAt', 'updatedAt'
+        'accessCodeUsed', 'paymentReference', 'onboardingCompleted',
+        'monthlySummaryEmailEnabled', 'referredByCode', 'referralMonthsEarned',
+        'mpPreapprovalId', 'mpSubscriptionStatus', 'autoRenewEnabled',
+        'createdAt', 'updatedAt'
       ]) &&
       isValidId(data.uid) &&
       data.email is string && data.email.size() >= 3 && data.email.size() <= 160 &&
@@ -200,6 +245,12 @@ service cloud.firestore {
       (!('accessCodeUsed' in data) || (data.accessCodeUsed is string && data.accessCodeUsed.size() <= 40)) &&
       (!('paymentReference' in data) || (data.paymentReference is string && data.paymentReference.size() <= 120)) &&
       (!('onboardingCompleted' in data) || data.onboardingCompleted is bool) &&
+      (!('monthlySummaryEmailEnabled' in data) || data.monthlySummaryEmailEnabled is bool) &&
+      (!('referredByCode' in data) || (data.referredByCode is string && data.referredByCode.size() <= 40)) &&
+      (!('referralMonthsEarned' in data) || (data.referralMonthsEarned is number && data.referralMonthsEarned >= 0 && data.referralMonthsEarned <= 500)) &&
+      (!('mpPreapprovalId' in data) || (data.mpPreapprovalId is string && data.mpPreapprovalId.size() <= 120)) &&
+      (!('mpSubscriptionStatus' in data) || data.mpSubscriptionStatus in ['none', 'pending', 'authorized', 'paused', 'cancelled']) &&
+      (!('autoRenewEnabled' in data) || data.autoRenewEnabled is bool) &&
       data.createdAt is timestamp &&
       data.updatedAt is timestamp;
     }
@@ -216,17 +267,54 @@ service cloud.firestore {
     function isValidAccessCode(data) {
       return data.keys().hasAll(['code', 'status', 'createdBy', 'createdAt']) &&
         data.keys().hasOnly([
-          'code', 'status', 'note', 'createdBy', 'createdAt', 'usedByUid', 'usedByEmail', 'usedAt'
+          'code', 'status', 'note', 'codeKind', 'referrerUid', 'referrerEmail',
+          'referrerDisplayName', 'bonusDays', 'referrerRewardApplied', 'referrerRewardAppliedAt',
+          'createdBy', 'createdAt', 'usedByUid', 'usedByEmail', 'usedAt'
         ]) &&
         data.code is string && data.code.size() >= 4 && data.code.size() <= 40 &&
         data.code.matches('^[A-Z0-9\\-]+$') &&
         data.status in ['unused', 'used', 'revoked'] &&
         (!('note' in data) || (data.note is string && data.note.size() <= 160)) &&
+        (!('codeKind' in data) || data.codeKind in ['standard', 'referral']) &&
+        (!('referrerUid' in data) || (data.referrerUid is string && data.referrerUid.size() <= 128)) &&
+        (!('referrerEmail' in data) || (data.referrerEmail is string && data.referrerEmail.size() <= 160)) &&
+        (!('referrerDisplayName' in data) || (data.referrerDisplayName is string && data.referrerDisplayName.size() <= 100)) &&
+        (!('bonusDays' in data) || (data.bonusDays is number && data.bonusDays >= 1 && data.bonusDays <= 365)) &&
+        (!('referrerRewardApplied' in data) || data.referrerRewardApplied is bool) &&
+        (!('referrerRewardAppliedAt' in data) || (data.referrerRewardAppliedAt is string && data.referrerRewardAppliedAt.size() <= 40)) &&
         data.createdBy is string && data.createdBy.size() >= 1 && data.createdBy.size() <= 128 &&
         data.createdAt is timestamp &&
         (!('usedByUid' in data) || (data.usedByUid is string && data.usedByUid.size() <= 128)) &&
         (!('usedByEmail' in data) || (data.usedByEmail is string && data.usedByEmail.size() <= 160)) &&
         (!('usedAt' in data) || data.usedAt is timestamp);
+    }
+
+    function isValidIvaSettings(iva) {
+      return iva is map &&
+        iva.keys().hasOnly(['enabled', 'pricesIncludeIva', 'f29Day', 'ivaRatePercent']) &&
+        (!('enabled' in iva) || iva.enabled is bool) &&
+        (!('pricesIncludeIva' in iva) || iva.pricesIncludeIva is bool) &&
+        (!('f29Day' in iva) || (iva.f29Day is number && iva.f29Day >= 1 && iva.f29Day <= 28)) &&
+        (!('ivaRatePercent' in iva) || (iva.ivaRatePercent is number && iva.ivaRatePercent >= 0 && iva.ivaRatePercent <= 50));
+    }
+
+    function isValidOwnerSalary(os) {
+      return os is map &&
+        os.keys().hasOnly(['included', 'monthlyAmount']) &&
+        (!('included' in os) || os.included is bool) &&
+        (!('monthlyAmount' in os) || (os.monthlyAmount is number && os.monthlyAmount >= 0 && os.monthlyAmount <= 1000000000));
+    }
+
+    function isValidCashFlowScenarioConfig(cfg) {
+      return cfg is map &&
+        cfg.keys().hasOnly([
+          'optimisticInflowPct', 'optimisticOutflowPct',
+          'pessimisticInflowPct', 'pessimisticOutflowPct'
+        ]) &&
+        (!('optimisticInflowPct' in cfg) || (cfg.optimisticInflowPct is number && cfg.optimisticInflowPct >= -80 && cfg.optimisticInflowPct <= 200)) &&
+        (!('optimisticOutflowPct' in cfg) || (cfg.optimisticOutflowPct is number && cfg.optimisticOutflowPct >= -80 && cfg.optimisticOutflowPct <= 200)) &&
+        (!('pessimisticInflowPct' in cfg) || (cfg.pessimisticInflowPct is number && cfg.pessimisticInflowPct >= -80 && cfg.pessimisticInflowPct <= 200)) &&
+        (!('pessimisticOutflowPct' in cfg) || (cfg.pessimisticOutflowPct is number && cfg.pessimisticOutflowPct >= -80 && cfg.pessimisticOutflowPct <= 200));
     }
 
     function isValidBusiness(data) {
@@ -240,7 +328,9 @@ service cloud.firestore {
         'expectedMonthlyUnits', 'monthlyGrowthPercent', 'projectionMonthsCount',
         'baseMonthlyUnitsByProduct', 'fixedCosts', 'products', 'projectionOverrides',
         'actuals', 'initialCashBalance', 'cashBalanceConfigured', 'workingCapitalExtras',
-        'receivables', 'payables', 'inventoryMovements', 'isDemo', 'createdAt', 'updatedAt'
+        'receivables', 'payables', 'inventoryMovements', 'ivaSettings', 'ownerSalary',
+        'monthlyCloseChecklists', 'cashFlowScenarioConfig',
+        'isDemo', 'createdAt', 'updatedAt'
       ]) &&
       isValidId(data.id) &&
       isValidId(data.ownerUid) &&
@@ -263,6 +353,10 @@ service cloud.firestore {
       (!('receivables' in data) || (data.receivables is list && data.receivables.size() <= 400)) &&
       (!('payables' in data) || (data.payables is list && data.payables.size() <= 400)) &&
       (!('inventoryMovements' in data) || (data.inventoryMovements is list && data.inventoryMovements.size() <= 800)) &&
+      (!('ivaSettings' in data) || isValidIvaSettings(data.ivaSettings)) &&
+      (!('ownerSalary' in data) || isValidOwnerSalary(data.ownerSalary)) &&
+      (!('monthlyCloseChecklists' in data) || data.monthlyCloseChecklists is map) &&
+      (!('cashFlowScenarioConfig' in data) || isValidCashFlowScenarioConfig(data.cashFlowScenarioConfig)) &&
       (!('isDemo' in data) || data.isDemo is bool) &&
       data.createdAt is timestamp &&
       data.updatedAt is timestamp;
@@ -366,6 +460,36 @@ service cloud.firestore {
       data.updatedAt is timestamp;
     }
 
+    function isValidGuideLead(data) {
+      return data.keys().hasAll(['id', 'email', 'consentAccepted', 'source', 'createdAt']) &&
+        data.keys().hasOnly([
+          'id', 'email', 'fixedCosts', 'variableCost', 'unitPrice',
+          'breakEvenUnits', 'consentAccepted', 'source', 'createdAt'
+        ]) &&
+        isValidId(data.id) &&
+        data.email is string && data.email.size() >= 5 && data.email.size() <= 160 &&
+        (!('fixedCosts' in data) || (data.fixedCosts is number && data.fixedCosts >= 0 && data.fixedCosts <= 10000000000)) &&
+        (!('variableCost' in data) || (data.variableCost is number && data.variableCost >= 0 && data.variableCost <= 1000000000)) &&
+        (!('unitPrice' in data) || (data.unitPrice is number && data.unitPrice >= 0 && data.unitPrice <= 1000000000)) &&
+        (!('breakEvenUnits' in data) || (data.breakEvenUnits is number && data.breakEvenUnits >= 0 && data.breakEvenUnits <= 100000000)) &&
+        data.consentAccepted == true &&
+        data.source in ['landing_calculator'] &&
+        data.createdAt is timestamp;
+    }
+
+    function isValidFunnelEvent(data) {
+      return data.keys().hasAll(['id', 'sessionId', 'step', 'day', 'createdAt']) &&
+        data.keys().hasOnly(['id', 'sessionId', 'step', 'source', 'planType', 'day', 'createdAt']) &&
+        isValidId(data.id) &&
+        data.sessionId is string && data.sessionId.size() >= 4 && data.sessionId.size() <= 80 &&
+        data.sessionId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.step in ['visit', 'login', 'onboarding', 'first_calculation', 'payment'] &&
+        (!('source' in data) || data.source in ['landing', 'public_calculator', 'app', 'demo', 'payment_view']) &&
+        (!('planType' in data) || data.planType in ['monthly', 'annual']) &&
+        data.day is string && data.day.size() == 10 && data.day.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$') &&
+        data.createdAt is timestamp;
+    }
+
     // 1. Public App Configuration
     match /appConfig/{configId} {
       allow get: if isValidId(configId);
@@ -433,15 +557,21 @@ service cloud.firestore {
             incoming().diff(existing()).affectedKeys().hasOnly(['onboardingCompleted', 'updatedAt']) &&
             incoming().onboardingCompleted is bool) ||
           (isOwner(userId) && isVerifiedUser() &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['monthlySummaryEmailEnabled', 'updatedAt']) &&
+            incoming().monthlySummaryEmailEnabled is bool) ||
+          (isOwner(userId) && isVerifiedUser() &&
             existing().accessStatus in ['pending', 'active'] &&
             incoming().diff(existing()).affectedKeys().hasOnly(['billingDay', 'planType', 'updatedAt'])) ||
+          (isOwner(userId) && isVerifiedUser() &&
+            existing().accessStatus in ['pending', 'active'] &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['mpPreapprovalId', 'mpSubscriptionStatus', 'autoRenewEnabled', 'planType', 'updatedAt'])) ||
           (isOwner(userId) && isVerifiedUser() &&
             existing().accessStatus == 'active' &&
             !('nextPaymentDueAt' in existing()) &&
             incoming().diff(existing()).affectedKeys().hasOnly(['billingDay', 'planType', 'nextPaymentDueAt', 'updatedAt'])) ||
           (isOwner(userId) && isVerifiedUser() &&
             existing().accessStatus in ['pending', 'active'] &&
-            incoming().diff(existing()).affectedKeys().hasOnly(['accessStatus', 'paymentStatus', 'planType', 'accessCodeUsed', 'nextPaymentDueAt', 'lastPaymentAt', 'updatedAt']) &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['accessStatus', 'paymentStatus', 'planType', 'accessCodeUsed', 'referredByCode', 'nextPaymentDueAt', 'lastPaymentAt', 'updatedAt']) &&
             incoming().accessStatus == 'active' &&
             incoming().paymentStatus == 'code_redeemed' &&
             'accessCodeUsed' in incoming() &&
@@ -541,15 +671,28 @@ service cloud.firestore {
       }
     }
 
-    // 6. Unique Access Codes
+    // 6. Unique Access Codes & Referral Invites
     match /accessCodes/{codeId} {
       allow get: if isValidId(codeId) && (isAdmin() || isVerifiedUser());
-      allow list: if isAdmin();
+      allow list: if isAdmin() || (isVerifiedUser() && resource.data.referrerUid == request.auth.uid);
 
-      allow create: if isValidId(codeId) && isAdmin() && isValidAccessCode(incoming()) &&
-        incoming().code == codeId &&
-        incoming().status == 'unused' &&
-        incoming().createdAt == request.time;
+      allow create: if isValidId(codeId) && (
+        (isAdmin() && isValidAccessCode(incoming()) &&
+          incoming().code == codeId &&
+          incoming().status == 'unused' &&
+          incoming().createdAt == request.time) ||
+        (isVerifiedUser() && isUserActive(request.auth.uid) &&
+          isValidAccessCode(incoming()) &&
+          incoming().code == codeId &&
+          incoming().code.matches('^REF-[A-Z0-9\\-]{4,36}$') &&
+          incoming().status == 'unused' &&
+          incoming().createdBy == request.auth.uid &&
+          incoming().codeKind == 'referral' &&
+          incoming().referrerUid == request.auth.uid &&
+          incoming().bonusDays == 30 &&
+          !('referrerRewardApplied' in incoming()) &&
+          incoming().createdAt == request.time)
+      );
 
       allow update: if isValidId(codeId) && isSignedIn() && isValidAccessCode(incoming()) &&
         incoming().code == existing().code &&
@@ -558,6 +701,7 @@ service cloud.firestore {
           isAdmin() ||
           (isVerifiedUser() &&
             existing().status == 'unused' &&
+            (!('referrerUid' in existing()) || existing().referrerUid != request.auth.uid) &&
             incoming().diff(existing()).affectedKeys().hasOnly(['status', 'usedByUid', 'usedByEmail', 'usedAt']) &&
             incoming().status == 'used' &&
             incoming().usedByUid == request.auth.uid &&
@@ -597,6 +741,28 @@ service cloud.firestore {
         incoming().adminUid == request.auth.uid &&
         incoming().createdAt == request.time;
       allow update, delete: if false;
+    }
+
+    // 9. Public Break-Even Guide Leads (Guest create with strict schema; admin-only reads)
+    match /guideLeads/{leadId} {
+      allow get, list: if isAdmin();
+      allow create: if isValidId(leadId) &&
+        isValidGuideLead(incoming()) &&
+        incoming().id == leadId &&
+        incoming().createdAt == request.time;
+      allow update: if false;
+      allow delete: if isValidId(leadId) && isAdmin();
+    }
+
+    // 10. Privacy-Respecting Funnel Analytics (Zero PII, append-only create, admin-only reads)
+    match /funnelEvents/{eventId} {
+      allow get, list: if isAdmin();
+      allow create: if isValidId(eventId) &&
+        isValidFunnelEvent(incoming()) &&
+        incoming().id == eventId &&
+        incoming().createdAt == request.time;
+      allow update: if false;
+      allow delete: if isValidId(eventId) && isAdmin();
     }
   }
 }

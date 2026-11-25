@@ -108,6 +108,30 @@ function makePushRecordId(endpoint: string): string {
   return crypto.createHash('sha256').update(endpoint).digest('hex').slice(0, 24);
 }
 
+function escapeHtml(raw: unknown): string {
+  return String(raw ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function sanitizeBackUrl(candidate: unknown): string {
+  const fallback = (process.env.APP_URL || 'https://growychile.cl').trim();
+  const base = /^https?:\/\//i.test(fallback) ? fallback : 'https://growychile.cl';
+  if (typeof candidate !== 'string' || !candidate.trim()) return base;
+  try {
+    const parsed = new URL(candidate.trim());
+    if (parsed.protocol === 'https:' || parsed.protocol === 'http:') {
+      return parsed.toString();
+    }
+    return base;
+  } catch {
+    return base;
+  }
+}
+
 async function startServer() {
   const app = express();
 
@@ -174,6 +198,30 @@ async function startServer() {
               isPaid = true;
             }
             if ((mpData.transaction_amount ?? 0) >= 45000) {
+              detectedPlan = 'annual';
+            }
+          }
+        } else if (
+          (payload.type === 'subscription_preapproval' ||
+            payload.type === 'subscription_authorized_payment' ||
+            payload.action?.includes('preapproval')) &&
+          mpPaymentId &&
+          process.env.MERCADOPAGO_ACCESS_TOKEN
+        ) {
+          const preRes = await fetch(`https://api.mercadopago.com/preapproval/${encodeURIComponent(mpPaymentId)}`, {
+            headers: {
+              Authorization: `Bearer ${process.env.MERCADOPAGO_ACCESS_TOKEN}`,
+            },
+          });
+          if (preRes.ok) {
+            const preData = (await preRes.json()) as {
+              status?: string;
+              auto_recurring?: { transaction_amount?: number };
+            };
+            if (preData.status === 'authorized' || preData.status === 'approved') {
+              isPaid = true;
+            }
+            if ((preData.auto_recurring?.transaction_amount ?? 0) >= 45000) {
               detectedPlan = 'annual';
             }
           }
@@ -270,6 +318,181 @@ async function startServer() {
         verified: false,
         activated: false,
         message: 'No se pudo verificar el pago en línea en este momento.',
+      });
+    }
+  });
+
+  /**
+   * 3.7 Suscripción recurrente automática con Mercado Pago (Preapproval) + respaldo manual
+   */
+  app.post('/api/payments/mercadopago-subscription', async (req, res) => {
+    try {
+      const {
+        uid,
+        email,
+        planType,
+        monthlyPriceClp,
+        annualPriceClp,
+        fallbackUrl,
+        backUrl,
+      } = req.body as {
+        uid?: string;
+        email?: string;
+        planType?: 'monthly' | 'annual';
+        monthlyPriceClp?: number;
+        annualPriceClp?: number;
+        fallbackUrl?: string;
+        backUrl?: string;
+      };
+
+      const isAnnual = planType === 'annual';
+      const safeFallback = sanitizeBackUrl(
+        fallbackUrl || (isAnnual ? process.env.VITE_MERCADOPAGO_ANNUAL_PAYMENT_URL : process.env.VITE_MERCADOPAGO_PAYMENT_URL)
+      );
+      const cleanEmail = typeof email === 'string' ? email.trim().toLowerCase().slice(0, 160) : '';
+
+      if (!process.env.MERCADOPAGO_ACCESS_TOKEN || !cleanEmail) {
+        res.status(200).json({
+          ok: true,
+          mode: 'manual_fallback',
+          fallbackUrl: safeFallback,
+          message:
+            'El cobro automático directo usa el link oficial de Mercado Pago como respaldo mientras no esté configurado MERCADOPAGO_ACCESS_TOKEN en el servidor.',
+        });
+        return;
+      }
+
+      const amount = isAnnual
+        ? Math.max(1000, Math.round(Number(annualPriceClp) || 50000))
+        : Math.max(1000, Math.round(Number(monthlyPriceClp) || 5990));
+
+      const mpRes = await fetch('https://api.mercadopago.com/preapproval', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${process.env.MERCADOPAGO_ACCESS_TOKEN}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          reason: isAnnual
+            ? 'GROWy Equilibrio · Plan Anual (12 meses)'
+            : 'GROWy Equilibrio · Suscripción Mensual PYME',
+          external_reference: `growy_${(uid || 'pyme').slice(0, 48)}_${isAnnual ? 'annual' : 'monthly'}`,
+          payer_email: cleanEmail,
+          auto_recurring: {
+            frequency: isAnnual ? 12 : 1,
+            frequency_type: 'months',
+            transaction_amount: amount,
+            currency_id: 'CLP',
+          },
+          back_url: sanitizeBackUrl(backUrl),
+          status: 'pending',
+        }),
+      });
+
+      if (!mpRes.ok) {
+        res.status(200).json({
+          ok: true,
+          mode: 'manual_fallback',
+          fallbackUrl: safeFallback,
+          message:
+            'No pudimos abrir el débito automático en este momento, así que te llevamos al link oficial de Mercado Pago como respaldo.',
+        });
+        return;
+      }
+
+      const preData = (await mpRes.json()) as {
+        id?: string;
+        init_point?: string;
+        sandbox_init_point?: string;
+      };
+
+      const initPoint = preData.init_point || preData.sandbox_init_point;
+      if (!initPoint) {
+        res.status(200).json({
+          ok: true,
+          mode: 'manual_fallback',
+          fallbackUrl: safeFallback,
+          message: 'Abrimos el link oficial de Mercado Pago como respaldo.',
+        });
+        return;
+      }
+
+      res.status(200).json({
+        ok: true,
+        mode: 'preapproval',
+        preapprovalId: preData.id,
+        initPoint,
+        message: 'Redirigiendo a Mercado Pago para autorizar tu suscripción automática.',
+      });
+    } catch {
+      res.status(200).json({
+        ok: true,
+        mode: 'manual_fallback',
+        fallbackUrl: sanitizeBackUrl(process.env.VITE_MERCADOPAGO_PAYMENT_URL),
+        message: 'Abrimos el link directo de Mercado Pago como respaldo.',
+      });
+    }
+  });
+
+  app.post('/api/payments/mercadopago-subscription-status', async (req, res) => {
+    try {
+      const { preapprovalId } = req.body as { preapprovalId?: string };
+      if (!preapprovalId || !process.env.MERCADOPAGO_ACCESS_TOKEN) {
+        res.status(200).json({
+          verified: false,
+          status: 'pending',
+          message:
+            'Recibimos el retorno de suscripción. Si tu cuenta sigue pendiente en unos segundos, puedes adjuntar el comprobante o usar un código de acceso.',
+        });
+        return;
+      }
+
+      const mpRes = await fetch(
+        `https://api.mercadopago.com/preapproval/${encodeURIComponent(preapprovalId)}`,
+        {
+          headers: {
+            Authorization: `Bearer ${process.env.MERCADOPAGO_ACCESS_TOKEN}`,
+          },
+        }
+      );
+
+      if (!mpRes.ok) {
+        res.status(200).json({
+          verified: false,
+          status: 'pending',
+          message: 'No pudimos consultar la suscripción en Mercado Pago todavía.',
+        });
+        return;
+      }
+
+      const preData = (await mpRes.json()) as {
+        status?: string;
+        next_payment_date?: string;
+      };
+      const rawStatus = String(preData.status || 'pending').toLowerCase();
+      const mappedStatus =
+        rawStatus === 'authorized' || rawStatus === 'approved'
+          ? 'authorized'
+          : rawStatus === 'paused'
+            ? 'paused'
+            : rawStatus === 'cancelled'
+              ? 'cancelled'
+              : 'pending';
+
+      res.status(200).json({
+        verified: mappedStatus === 'authorized',
+        status: mappedStatus,
+        nextPaymentDate: preData.next_payment_date,
+        message:
+          mappedStatus === 'authorized'
+            ? 'Tu débito automático en Mercado Pago quedó autorizado correctamente.'
+            : `Estado actual en Mercado Pago: ${mappedStatus}.`,
+      });
+    } catch {
+      res.status(200).json({
+        verified: false,
+        status: 'pending',
+        message: 'No pudimos confirmar tu suscripción automática en este momento.',
       });
     }
   });
@@ -541,6 +764,250 @@ async function startServer() {
         ok: false,
         emailed: false,
         receiptStatus: 'pendiente_envio',
+      });
+    }
+  });
+
+  /**
+   * Envía la mini-guía práctica de punto de equilibrio al correo opcional ingresado en la landing
+   */
+  app.post('/api/public/breakeven-guide', async (req, res) => {
+    try {
+      const { email, fixedCosts, variableCost, unitPrice, breakEvenUnits } = req.body as {
+        email?: string;
+        fixedCosts?: number;
+        variableCost?: number;
+        unitPrice?: number;
+        breakEvenUnits?: number;
+      };
+
+      const cleanEmail = typeof email === 'string' ? email.trim().toLowerCase().slice(0, 160) : '';
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+        res.status(400).json({ ok: false, emailed: false, error: 'Correo inválido.' });
+        return;
+      }
+
+      const fmtClp = (v: unknown) => {
+        const n = Number(v);
+        if (!Number.isFinite(n) || n < 0) return 'Por definir';
+        return `$${Math.round(n).toLocaleString('es-CL')}`;
+      };
+
+      const safeUnits =
+        typeof breakEvenUnits === 'number' && Number.isFinite(breakEvenUnits) && breakEvenUnits >= 0
+          ? `${Math.round(breakEvenUnits)} unidades`
+          : 'Por calcular';
+
+      const textGuide = [
+        'Guía práctica GROWy: Tu punto de equilibrio en 3 pasos',
+        '',
+        'Resumen de lo que simulaste en growychile.cl:',
+        `- Costos fijos del mes: ${fmtClp(fixedCosts)}`,
+        `- Costo variable por unidad: ${fmtClp(variableCost)}`,
+        `- Precio de venta por unidad: ${fmtClp(unitPrice)}`,
+        `- Punto de equilibrio estimado: ${safeUnits}`,
+        '',
+        '3 ideas simples para usarlo hoy en tu pyme:',
+        '1. Separa tus costos fijos (lo que pagas vendas o no) de tus costos variables (insumos, empaque, despacho, comisiones).',
+        '2. Revisa cuánto te deja libre cada venta (Precio - Costo variable). Ese monto es tu margen de contribución.',
+        '3. Si quieres dar el siguiente paso con varios productos, meta de ganancia y proyección mes a mes, entra a Equilibrio en https://growychile.cl.',
+        '',
+        'Un abrazo,',
+        'Equipo GROWy',
+      ].join('\n');
+
+      const htmlGuide = `
+        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 560px; margin: 0 auto; padding: 24px; background: #FFF7F3; color: #1A1A1E; border-radius: 20px;">
+          <div style="background: #FFFFFF; border: 1px solid #EFE2E5; border-radius: 18px; padding: 24px;">
+            <p style="margin: 0 0 6px; font-size: 12px; font-weight: 700; color: #B4474A;">GROWy · Guía práctica</p>
+            <h1 style="margin: 0 0 12px; font-size: 20px;">Tu punto de equilibrio en palabras simples</h1>
+            <p style="margin: 0 0 16px; font-size: 14px; color: #6E6D7A; line-height: 1.6;">
+              Aquí tienes el resumen de la simulación que hiciste en GROWy y tres pasos concretos para usarla en tu negocio:
+            </p>
+            <div style="background: #FFF7F3; border-radius: 14px; padding: 14px 16px; margin-bottom: 16px; font-size: 13px;">
+              <p style="margin: 4px 0;"><strong>Costos fijos del mes:</strong> ${fmtClp(fixedCosts)}</p>
+              <p style="margin: 4px 0;"><strong>Costo variable unitario:</strong> ${fmtClp(variableCost)}</p>
+              <p style="margin: 4px 0;"><strong>Precio de venta:</strong> ${fmtClp(unitPrice)}</p>
+              <p style="margin: 6px 0 0; color: #B4474A;"><strong>Punto de equilibrio:</strong> ${safeUnits}</p>
+            </div>
+            <ol style="margin: 0 0 16px; padding-left: 18px; font-size: 13px; color: #1A1A1E; line-height: 1.6;">
+              <li>Separa siempre lo fijo (arriendo, cuentas, sueldos base) de lo que gastas por cada unidad vendida.</li>
+              <li>Cuida tu margen por venta: Precio menos costo variable. Eso es lo que primero cubre el mes y luego se vuelve ganancia.</li>
+              <li>Proyecta con calma tus metas reales en Equilibrio cuando quieras llevar varios productos y tu flujo mensual.</li>
+            </ol>
+            <p style="margin: 0; font-size: 12px; color: #6E6D7A;">
+              Recibiste este correo porque lo solicitaste voluntariamente en nuestra calculadora pública. No compartimos tus datos con terceros.
+            </p>
+          </div>
+        </div>
+      `;
+
+      let emailed = false;
+      if (process.env.RESEND_API_KEY) {
+        const resendRes = await fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            from: process.env.RESEND_FROM_EMAIL || 'GROWy <onboarding@resend.dev>',
+            to: [cleanEmail],
+            subject: 'Tu guía práctica de punto de equilibrio · GROWy',
+            text: textGuide,
+            html: htmlGuide,
+          }),
+        });
+        emailed = resendRes.ok;
+      }
+
+      res.status(200).json({ ok: true, emailed });
+    } catch (err) {
+      console.error('[Guía Pública GROWy] Error:', err);
+      res.status(200).json({ ok: false, emailed: false });
+    }
+  });
+
+  /**
+   * 3.4 Resumen mensual por correo ("Así te fue en este mes") vía Resend
+   */
+  app.post('/api/reports/send-monthly-summary', async (req, res) => {
+    try {
+      const {
+        email,
+        displayName,
+        emailOptOut,
+        businessName,
+        monthLabel,
+        incomeFormatted,
+        expensesFormatted,
+        profitFormatted,
+        projectedIncomeFormatted,
+        breakEvenUnitsLabel,
+        statusLabel,
+        highlights,
+      } = req.body as {
+        email?: string;
+        displayName?: string;
+        emailOptOut?: boolean;
+        businessName?: string;
+        monthLabel?: string;
+        incomeFormatted?: string;
+        expensesFormatted?: string;
+        profitFormatted?: string;
+        projectedIncomeFormatted?: string;
+        breakEvenUnitsLabel?: string;
+        statusLabel?: string;
+        highlights?: string[];
+      };
+
+      if (emailOptOut) {
+        res.status(200).json({
+          ok: true,
+          emailed: false,
+          skipped: true,
+          message: 'Tienes desactivado el resumen mensual por correo en Configuración.',
+        });
+        return;
+      }
+
+      const cleanEmail = typeof email === 'string' ? email.trim().toLowerCase().slice(0, 160) : '';
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+        res.status(400).json({ ok: false, emailed: false, message: 'Correo inválido.' });
+        return;
+      }
+
+      const safeName = escapeHtml(displayName || 'Emprendedor/a');
+      const safeBiz = escapeHtml(businessName || 'Tu negocio');
+      const safeMonth = escapeHtml(monthLabel || 'este mes');
+      const safeIncome = escapeHtml(incomeFormatted || '$0');
+      const safeExpenses = escapeHtml(expensesFormatted || '$0');
+      const safeProfit = escapeHtml(profitFormatted || '$0');
+      const safeProjected = escapeHtml(projectedIncomeFormatted || '$0');
+      const safeBreakEven = escapeHtml(breakEvenUnitsLabel || 'Por definir');
+      const safeStatus = escapeHtml(statusLabel || 'Resumen mensual');
+      const safeHighlights = Array.isArray(highlights) ? highlights.slice(0, 5) : [];
+
+      const textSummary = [
+        `Así te fue en ${monthLabel || 'este mes'} · ${businessName || 'Tu negocio'} (GROWy Equilibrio)`,
+        '',
+        `Hola ${displayName || 'Emprendedor/a'},`,
+        `Estado del mes: ${statusLabel || 'Resumen listo'}`,
+        `- Ingresos reales: ${incomeFormatted || '$0'} (meta proyectada: ${projectedIncomeFormatted || '$0'})`,
+        `- Egresos reales: ${expensesFormatted || '$0'}`,
+        `- Resultado del mes: ${profitFormatted || '$0'}`,
+        `- Punto de equilibrio actual: ${breakEvenUnitsLabel || 'Por definir'}`,
+        '',
+        ...(safeHighlights.length > 0
+          ? ['Claves del mes:', ...safeHighlights.map((h) => `• ${h}`), '']
+          : []),
+        'Puedes activar o desactivar este correo cuando quieras desde Configuración -> Resumen mensual por correo.',
+        'Equipo GROWy',
+      ].join('\n');
+
+      const htmlHighlights = safeHighlights
+        .map((h) => `<li style="margin-bottom: 6px;">${escapeHtml(h)}</li>`)
+        .join('');
+
+      const htmlSummary = `
+        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 560px; margin: 0 auto; padding: 24px; background: #FFF7F3; color: #1A1A1E; border-radius: 20px;">
+          <div style="background: #FFFFFF; border: 1px solid #EFE2E5; border-radius: 18px; padding: 24px;">
+            <p style="margin: 0 0 6px; font-size: 12px; font-weight: 700; color: #B4474A;">GROWy · Equilibrio</p>
+            <h1 style="margin: 0 0 8px; font-size: 20px;">Así te fue en ${safeMonth}</h1>
+            <p style="margin: 0 0 16px; font-size: 14px; color: #6E6D7A; line-height: 1.55;">
+              Hola <strong>${safeName}</strong>, aquí tienes la fotografía clara de <strong>${safeBiz}</strong>: <em>${safeStatus}</em>.
+            </p>
+            <table style="width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 16px;">
+              <tr><td style="padding: 8px 0; border-bottom: 1px solid #EFE2E5; color: #6E6D7A;">Ingresos reales</td><td style="padding: 8px 0; border-bottom: 1px solid #EFE2E5; font-weight: 700; text-align: right;">${safeIncome}</td></tr>
+              <tr><td style="padding: 8px 0; border-bottom: 1px solid #EFE2E5; color: #6E6D7A;">Meta proyectada</td><td style="padding: 8px 0; border-bottom: 1px solid #EFE2E5; text-align: right;">${safeProjected}</td></tr>
+              <tr><td style="padding: 8px 0; border-bottom: 1px solid #EFE2E5; color: #6E6D7A;">Egresos reales</td><td style="padding: 8px 0; border-bottom: 1px solid #EFE2E5; font-weight: 700; text-align: right;">${safeExpenses}</td></tr>
+              <tr><td style="padding: 8px 0; border-bottom: 1px solid #EFE2E5; color: #6E6D7A;">Resultado del mes</td><td style="padding: 8px 0; border-bottom: 1px solid #EFE2E5; font-weight: 700; color: #1E7A6B; text-align: right;">${safeProfit}</td></tr>
+              <tr><td style="padding: 8px 0; color: #6E6D7A;">Punto de equilibrio</td><td style="padding: 8px 0; font-weight: 600; text-align: right;">${safeBreakEven}</td></tr>
+            </table>
+            ${
+              htmlHighlights
+                ? `<div style="background: #F6F4FA; border-radius: 14px; padding: 14px 16px; margin-bottom: 16px; font-size: 13px;"><p style="margin: 0 0 8px; font-weight: 700;">Lo más importante del mes:</p><ul style="margin: 0; padding-left: 18px;">${htmlHighlights}</ul></div>`
+                : ''
+            }
+            <p style="margin: 0; font-size: 12px; color: #6E6D7A;">
+              Si prefieres no recibir este resumen por correo, puedes desactivarlo en un clic dentro de Configuración en GROWy.
+            </p>
+          </div>
+        </div>
+      `;
+
+      let emailed = false;
+      if (process.env.RESEND_API_KEY) {
+        const resendRes = await fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            from: process.env.RESEND_FROM_EMAIL || 'GROWy Equilibrio <onboarding@resend.dev>',
+            to: [cleanEmail],
+            subject: `Así te fue en ${monthLabel || 'este mes'} · ${businessName || 'Tu negocio'}`,
+            text: textSummary,
+            html: htmlSummary,
+          }),
+        });
+        emailed = resendRes.ok;
+      }
+
+      res.status(200).json({
+        ok: true,
+        emailed,
+        message: emailed
+          ? `Enviamos tu resumen «Así te fue en ${monthLabel || 'este mes'}» a ${cleanEmail}.`
+          : 'Preparamos tu resumen del mes. Para enviarlo automáticamente al correo, configura RESEND_API_KEY en el servidor.',
+      });
+    } catch (err) {
+      console.error('[Resumen Mensual GROWy] Error:', err);
+      res.status(200).json({
+        ok: false,
+        emailed: false,
+        message: 'No se pudo enviar el resumen mensual en este momento.',
       });
     }
   });

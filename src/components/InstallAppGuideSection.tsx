@@ -8,6 +8,8 @@ import {
   Smartphone,
 } from 'lucide-react';
 import { usePWAInstall } from '../hooks/usePWAInstall';
+import { SolidCard } from './design-system/GlassCard';
+import { EditorialText } from './design-system/SectionTitle';
 import { PWAInstallButton } from './PWAControls';
 
 type DeviceTab = 'android' | 'ios' | 'desktop';
@@ -24,15 +26,15 @@ export const InstallAppGuideSection: React.FC<{ compact?: boolean }> = ({
     typeof window !== 'undefined' ? window.location.origin : 'https://growy.app';
 
   return (
-    <section className="boho-card p-6 sm:p-7 space-y-5">
+    <SolidCard as="section" className="p-6 sm:p-7 space-y-5">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="space-y-1 max-w-2xl">
-          <p className="text-xs font-bold text-[var(--sec-text)] inline-flex items-center gap-1.5">
+          <p className="text-xs font-bold tracking-[0.04em] uppercase text-[var(--sec-text)] inline-flex items-center gap-1.5">
             <Smartphone className="w-4 h-4 shrink-0" />
             <span>Nube + App instalable en tu dispositivo</span>
           </p>
-          <h2 className="font-display text-xl sm:text-2xl font-bold text-[var(--text-primary)]">
-            Cómo instalar GROWy. y Equilibrio en tu celular o computador
+          <h2 className="font-display text-xl sm:text-2xl font-extrabold tracking-tight text-[var(--text-primary)]">
+            <EditorialText text="Cómo instalar GROWy. y *Equilibrio* en tu celular o computador" />
           </h2>
           <p className="text-xs sm:text-sm text-[var(--text-secondary)] leading-relaxed">
             Usa cada producto desde la nube o sigue estos pasos para instalarlo como aplicación
@@ -274,6 +276,6 @@ export const InstallAppGuideSection: React.FC<{ compact?: boolean }> = ({
           </ul>
         </div>
       )}
-    </section>
+    </SolidCard>
   );
 };

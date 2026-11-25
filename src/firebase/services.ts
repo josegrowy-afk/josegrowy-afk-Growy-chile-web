@@ -4,6 +4,7 @@ import {
   doc,
   getDoc,
   getDocs,
+  limit,
   onSnapshot,
   orderBy,
   query,
@@ -14,6 +15,12 @@ import {
   writeBatch,
 } from 'firebase/firestore';
 import { createDemoBusinesses } from '../data/demoData';
+import {
+  buildMonthlySummaryEmailPayload,
+  buildReferralInviteCodeString,
+  computeReferralBonusDueDate,
+  REFERRAL_BONUS_DAYS,
+} from '../finance/phase3Insights';
 import {
   ANNUAL_PRICE_CLP,
   ANNUAL_PRICE_LABEL,
@@ -34,7 +41,10 @@ import type {
   BusinessWorkspace,
   FaqCategory,
   FaqItem,
+  FunnelEventRecord,
+  FunnelStep,
   LandingContentConfig,
+  MpSubscriptionStatus,
   PaymentHistoryEntry,
   PaymentMethodType,
   PaymentReceiptStatus,
@@ -42,6 +52,7 @@ import type {
   PlanType,
   PushSubscriptionRecord,
   SupportTicket,
+  TestimonialItem,
   TicketAttachment,
   TicketStatus,
   TicketType,
@@ -147,11 +158,29 @@ export const DEFAULT_LANDING_CONTENT: LandingContentConfig = {
   closingSubtitle:
     'Empieza hoy con Equilibrio y transforma tus cifras en tranquilidad para crear.',
   closingCtaLabel: 'Conocer Equilibrio',
+  painEyebrow: 'Lo que viven muchas pymes',
+  painTitle: '¿Sabes si de verdad ganas con cada producto que vendes?',
+  painPoints: [
+    'Vendes harto todo el mes, pero al llegar al día 30 no sabes adónde se fue la plata.',
+    'Fijas tus precios mirando a la competencia, sin saber si cubres tus insumos, envíos, comisiones ni tu propio sueldo.',
+    'Las planillas de Excel se enredan o se rompen justo cuando necesitas tomar una decisión rápida.',
+  ].join('\n'),
+  priceComparisonText:
+    'Por menos de lo que cuesta un café con pastel al mes ($5.990/mes, o ~$4.167/mes en el plan anual), ordenas los números de tu pyme todo el año.',
+  privacyTitle: 'Tus datos son privados y solo tuyos',
+  privacyBody:
+    'Tu información se guarda aislada en tu cuenta personal sobre Google Cloud Firestore. Nunca te pedimos claves del banco, ni credenciales tributarias, ni acceso a tus cuentas corrientes. Tampoco vendemos ni compartimos tus cifras con terceros.',
+  supportHumanTitle: 'Soporte humano cercano, sin bots fríos',
+  supportHumanBody:
+    'Detrás de GROWy hay personas reales que hablan en simple y conocen la realidad de emprender en Chile. Si te trabas cargando un costo o tienes dudas con tu comprobante, te ayudamos directo.',
 };
 
 export const DEFAULT_APP_CONFIG: AppConfig = {
   paymentUrl: DEFAULT_MERCADOPAGO_URL,
   annualPaymentUrl: DEFAULT_ANNUAL_MERCADOPAGO_URL,
+  monthlyPriceClp: MONTHLY_PRICE_CLP,
+  annualPriceClp: ANNUAL_PRICE_CLP,
+  mpRecurringEnabled: true,
   priceLabel: MONTHLY_PRICE_LABEL,
   currencyNote: 'O $50.000 / año (12 meses · ahorras $21.880)',
   heroTitle: 'La creatividad *sueña*, los números la sostienen.',
@@ -159,6 +188,10 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
     'Growy te explica tus cifras de forma simple, para que te dediques a hacer crecer lo que imaginas.',
   guaranteeText:
     'Elige $5.990/mes o $50.000/año (12 meses) en Mercado Pago. Al vencer el mes o el año, el acceso se pausa hasta renovar con tu link de pago.',
+  refundGuaranteeText:
+    'Garantía de tranquilidad: si pruebas Equilibrio durante tus primeros 7 días y sientes que no te da claridad, escríbenos y te devolvemos el 100% de tu pago.',
+  whatsappUrl: '',
+  testimonials: [],
   contactEmail: BOOTSTRAPPED_ADMIN_EMAIL,
   welcomeMessage:
     'Bienvenido a Growy. Activa tu acceso a Equilibrio eligiendo tu plan mensual ($5.990/mes) o anual ($50.000/año) o ingresando tu código.',
@@ -326,6 +359,15 @@ export function subscribeAppConfig(onUpdate: (config: AppConfig) => void): () =>
             : remote.currencyNote || DEFAULT_APP_CONFIG.currencyNote,
           paymentUrl: effectivePaymentUrl,
           annualPaymentUrl: effectiveAnnualPaymentUrl,
+          monthlyPriceClp:
+            typeof remote.monthlyPriceClp === 'number' && remote.monthlyPriceClp > 0
+              ? Math.round(remote.monthlyPriceClp)
+              : MONTHLY_PRICE_CLP,
+          annualPriceClp:
+            typeof remote.annualPriceClp === 'number' && remote.annualPriceClp > 0
+              ? Math.round(remote.annualPriceClp)
+              : ANNUAL_PRICE_CLP,
+          mpRecurringEnabled: remote.mpRecurringEnabled !== false,
           landingContent: {
             ...DEFAULT_LANDING_CONTENT,
             ...migratedLanding,
@@ -712,10 +754,16 @@ export async function redeemAccessCode(params: {
     throw new Error('Este código ya fue utilizado o revocado.');
   }
 
+  const isReferral = codeData.codeKind === 'referral';
+  if (isReferral && codeData.referrerUid && codeData.referrerUid === params.uid) {
+    throw new Error('No puedes canjear tu propio código de referido. Compártelo con otra pyme.');
+  }
+
   const chosenPlan: PlanType = params.planType === 'annual' ? 'annual' : 'monthly';
   const effectiveBillingDay: BillingDay = params.billingDay ?? 5;
-  const nextDue =
-    chosenPlan === 'annual'
+  const nextDue = isReferral
+    ? computeReferralBonusDueDate(params.currentDueAt, codeData.bonusDays ?? REFERRAL_BONUS_DAYS)
+    : chosenPlan === 'annual'
       ? computeAnnualDueDate(params.currentDueAt)
       : computeNextCycleDueDate(effectiveBillingDay, params.currentDueAt);
   const nowISO = new Date().toISOString();
@@ -732,6 +780,7 @@ export async function redeemAccessCode(params: {
     paymentStatus: 'code_redeemed',
     planType: chosenPlan,
     accessCodeUsed: cleanCode,
+    ...(isReferral ? { referredByCode: cleanCode } : {}),
     nextPaymentDueAt: nextDue,
     lastPaymentAt: nowISO,
     updatedAt: serverTimestamp(),
@@ -750,12 +799,18 @@ export async function redeemAccessCode(params: {
       email: params.email,
       displayName: params.displayName || params.email,
       planType: chosenPlan,
-      amountClp: chosenPlan === 'annual' ? ANNUAL_PRICE_CLP : MONTHLY_PRICE_CLP,
+      amountClp: isReferral
+        ? 0
+        : chosenPlan === 'annual'
+          ? ANNUAL_PRICE_CLP
+          : MONTHLY_PRICE_CLP,
       transactionId: cleanCode,
       paymentMethod: 'codigo_acceso',
       paidAt: nowISO,
       periodCoveredEnd: nextDue,
-      notes: 'Activación mediante código único de acceso',
+      notes: isReferral
+        ? `Activación con código de referido (${codeData.bonusDays ?? REFERRAL_BONUS_DAYS} días gratis para tu pyme)`
+        : 'Activación mediante código único de acceso',
     });
   } catch {
     // No bloquear acceso si el envío/registro secundario falla
@@ -1047,6 +1102,10 @@ export async function saveUserBusiness(
       price: Math.max(0, Number(product.price) || 0),
       variableCost: Math.max(0, Number(product.variableCost) || 0),
       supplyCostItems: cleanItems && cleanItems.length > 0 ? cleanItems : undefined,
+      personalTimeMinutes:
+        product.personalTimeMinutes !== undefined && Number(product.personalTimeMinutes) > 0
+          ? Math.min(100000, Math.max(0, Number(product.personalTimeMinutes) || 0))
+          : undefined,
       trackInventory: product.trackInventory ? true : undefined,
       initialStock:
         product.initialStock !== undefined ? Math.max(0, Number(product.initialStock) || 0) : undefined,
@@ -1077,6 +1136,49 @@ export async function saveUserBusiness(
       }
     : undefined;
 
+  const cleanIvaSettings = business.ivaSettings
+    ? {
+        enabled: business.ivaSettings.enabled ?? true,
+        pricesIncludeIva: business.ivaSettings.pricesIncludeIva ?? true,
+        f29Day: Math.max(1, Math.min(28, Math.round(Number(business.ivaSettings.f29Day) || 12))),
+        ivaRatePercent: Math.max(
+          0,
+          Math.min(50, Number(business.ivaSettings.ivaRatePercent ?? 19) || 0)
+        ),
+      }
+    : undefined;
+
+  const cleanOwnerSalary = business.ownerSalary
+    ? {
+        included: Boolean(business.ownerSalary.included),
+        monthlyAmount: Math.max(
+          0,
+          Math.min(1000000000, Number(business.ownerSalary.monthlyAmount) || 0)
+        ),
+      }
+    : undefined;
+
+  const cleanScenarioConfig = business.cashFlowScenarioConfig
+    ? {
+        optimisticInflowPct: Math.max(
+          -80,
+          Math.min(200, Number(business.cashFlowScenarioConfig.optimisticInflowPct ?? 15) || 0)
+        ),
+        optimisticOutflowPct: Math.max(
+          -80,
+          Math.min(200, Number(business.cashFlowScenarioConfig.optimisticOutflowPct ?? -5) || 0)
+        ),
+        pessimisticInflowPct: Math.max(
+          -80,
+          Math.min(200, Number(business.cashFlowScenarioConfig.pessimisticInflowPct ?? -15) || 0)
+        ),
+        pessimisticOutflowPct: Math.max(
+          -80,
+          Math.min(200, Number(business.cashFlowScenarioConfig.pessimisticOutflowPct ?? 10) || 0)
+        ),
+      }
+    : undefined;
+
   // Eliminar propiedades undefined antes de enviar a Firestore
   const payload = JSON.parse(
     JSON.stringify({
@@ -1101,6 +1203,10 @@ export async function saveUserBusiness(
       receivables: cleanReceivables,
       payables: cleanPayables,
       inventoryMovements: cleanInventoryMovements,
+      ivaSettings: cleanIvaSettings,
+      ownerSalary: cleanOwnerSalary,
+      monthlyCloseChecklists: business.monthlyCloseChecklists,
+      cashFlowScenarioConfig: cleanScenarioConfig,
       isDemo: Boolean(business.isDemo),
     })
   );
@@ -1748,22 +1854,81 @@ function sanitizeLandingContent(raw?: Partial<LandingContentConfig>): LandingCon
     closingTitle: clampStr(src.closingTitle, 220),
     closingSubtitle: clampStr(src.closingSubtitle, 600),
     closingCtaLabel: clampStr(src.closingCtaLabel, 100),
+    painEyebrow: clampStr(src.painEyebrow, 140),
+    painTitle: clampStr(src.painTitle, 220),
+    painPoints: clampStr(src.painPoints, 900),
+    priceComparisonText: clampStr(src.priceComparisonText, 350),
+    privacyTitle: clampStr(src.privacyTitle, 180),
+    privacyBody: clampStr(src.privacyBody, 700),
+    supportHumanTitle: clampStr(src.supportHumanTitle, 180),
+    supportHumanBody: clampStr(src.supportHumanBody, 700),
   };
+}
+
+function sanitizeTestimonials(raw?: TestimonialItem[]): TestimonialItem[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .slice(0, 8)
+    .map((item, idx) => {
+      const cleanId =
+        clampStr(item?.id, 80).replace(/[^a-zA-Z0-9_-]/g, '') ||
+        `testimonio-${Date.now()}-${idx}`;
+      const cleanName = clampStr(item?.name, 100);
+      const cleanBiz = clampStr(item?.businessName, 120);
+      const cleanQuote = clampStr(item?.quote, 600);
+      const cleanCity = clampStr(item?.city, 80);
+      const cleanHighlight = clampStr(item?.resultHighlight, 140);
+      const sanitized: TestimonialItem = {
+        id: cleanId,
+        name: cleanName,
+        businessName: cleanBiz,
+        quote: cleanQuote,
+        permissionGranted: Boolean(item?.permissionGranted),
+        ...(cleanCity ? { city: cleanCity } : {}),
+        ...(cleanHighlight ? { resultHighlight: cleanHighlight } : {}),
+      };
+      return sanitized;
+    })
+    .filter(
+      (item) =>
+        item.name.length >= 1 &&
+        item.businessName.length >= 1 &&
+        item.quote.length >= 3
+    );
 }
 
 export async function adminSaveAppConfig(admin: UserProfile, nextConfig: AppConfig): Promise<void> {
   try {
+    const monthlyPriceClp =
+      typeof nextConfig.monthlyPriceClp === 'number' && Number.isFinite(nextConfig.monthlyPriceClp) && nextConfig.monthlyPriceClp > 0
+        ? Math.min(10000000, Math.round(nextConfig.monthlyPriceClp))
+        : MONTHLY_PRICE_CLP;
+    const annualPriceClp =
+      typeof nextConfig.annualPriceClp === 'number' && Number.isFinite(nextConfig.annualPriceClp) && nextConfig.annualPriceClp > 0
+        ? Math.min(100000000, Math.round(nextConfig.annualPriceClp))
+        : ANNUAL_PRICE_CLP;
+
+    const cleanWhatsapp = clampStr(nextConfig.whatsappUrl, 300);
+    const cleanRefundGuarantee = clampStr(nextConfig.refundGuaranteeText, 500);
+    const cleanTestimonials = sanitizeTestimonials(nextConfig.testimonials);
+
     await setDoc(doc(db, 'appConfig', 'public'), {
       paymentUrl: clampStr(nextConfig.paymentUrl, 500),
       annualPaymentUrl: clampStr(
         nextConfig.annualPaymentUrl || DEFAULT_ANNUAL_MERCADOPAGO_URL,
         500
       ),
+      monthlyPriceClp,
+      annualPriceClp,
+      mpRecurringEnabled: nextConfig.mpRecurringEnabled !== false,
       priceLabel: clampStr(nextConfig.priceLabel, 60),
       currencyNote: clampStr(nextConfig.currencyNote, 160),
       heroTitle: clampStr(nextConfig.heroTitle, 160),
       heroSubtitle: clampStr(nextConfig.heroSubtitle, 400),
       guaranteeText: clampStr(nextConfig.guaranteeText, 400),
+      refundGuaranteeText: cleanRefundGuarantee,
+      whatsappUrl: cleanWhatsapp,
+      testimonials: cleanTestimonials,
       contactEmail: clampStr(nextConfig.contactEmail, 120),
       welcomeMessage: clampStr(nextConfig.welcomeMessage, 400),
       announcementText: clampStr(nextConfig.announcementText, 300),
@@ -1776,11 +1941,81 @@ export async function adminSaveAppConfig(admin: UserProfile, nextConfig: AppConf
       adminEmail: admin.email,
       action: 'Actualizar configuración global',
       target: 'appConfig/public',
-      details: `Precio: ${nextConfig.priceLabel} · Anuncio: ${nextConfig.announcementActive ? 'Activo' : 'Inactivo'}`,
+      details: `Precio: ${nextConfig.priceLabel} (Mensual $${monthlyPriceClp} / Anual $${annualPriceClp}) · Testimonios: ${cleanTestimonials.length} · Anuncio: ${nextConfig.announcementActive ? 'Activo' : 'Inactivo'}`,
     });
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, 'appConfig/public');
   }
+}
+
+export async function savePublicBreakEvenGuideLead(params: {
+  email: string;
+  fixedCosts?: number;
+  variableCost?: number;
+  unitPrice?: number;
+  breakEvenUnits?: number;
+  consentAccepted: boolean;
+}): Promise<{ id: string; emailed: boolean }> {
+  const cleanEmail = clampStr(params.email, 160).toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+    throw new Error('Ingresa un correo válido para enviarte la guía.');
+  }
+  if (!params.consentAccepted) {
+    throw new Error('Marca la casilla de autorización para poder enviarte la guía.');
+  }
+
+  const leadId = `lead-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  const path = `guideLeads/${leadId}`;
+  const docPayload = JSON.parse(
+    JSON.stringify({
+      id: leadId,
+      email: cleanEmail,
+      fixedCosts:
+        params.fixedCosts !== undefined && Number.isFinite(params.fixedCosts)
+          ? Math.max(0, Math.min(10000000000, Math.round(params.fixedCosts)))
+          : undefined,
+      variableCost:
+        params.variableCost !== undefined && Number.isFinite(params.variableCost)
+          ? Math.max(0, Math.min(1000000000, Math.round(params.variableCost)))
+          : undefined,
+      unitPrice:
+        params.unitPrice !== undefined && Number.isFinite(params.unitPrice)
+          ? Math.max(0, Math.min(1000000000, Math.round(params.unitPrice)))
+          : undefined,
+      breakEvenUnits:
+        params.breakEvenUnits !== undefined && Number.isFinite(params.breakEvenUnits)
+          ? Math.max(0, Math.min(100000000, Math.round(params.breakEvenUnits)))
+          : undefined,
+      consentAccepted: true,
+      source: 'landing_calculator',
+    })
+  );
+
+  try {
+    await setDoc(doc(db, 'guideLeads', leadId), {
+      ...docPayload,
+      createdAt: serverTimestamp(),
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.CREATE, path);
+  }
+
+  let emailed = false;
+  try {
+    const res = await fetch('/api/public/breakeven-guide', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(docPayload),
+    });
+    if (res.ok) {
+      const json = (await res.json()) as { emailed?: boolean };
+      emailed = Boolean(json.emailed);
+    }
+  } catch {
+    // El correo quedó registrado en Firestore aunque no haya Resend activo
+  }
+
+  return { id: leadId, emailed };
 }
 
 export async function adminUpdateSupportTicket(params: {
@@ -1806,3 +2041,405 @@ export async function adminUpdateSupportTicket(params: {
     handleFirestoreError(error, OperationType.UPDATE, `supportTickets/${params.ticket.id}`);
   }
 }
+
+/* ============================================================================
+ * FASE 3: CORREO MENSUAL RESEND, REFERIDOS Y SUSCRIPCIÓN RECURRENTE MERCADO PAGO
+ * ============================================================================ */
+
+export async function updateUserMonthlySummaryEmailPref(
+  uid: string,
+  enabled: boolean
+): Promise<void> {
+  const path = `users/${uid}`;
+  try {
+    await updateDoc(doc(db, 'users', uid), {
+      monthlySummaryEmailEnabled: Boolean(enabled),
+      updatedAt: serverTimestamp(),
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, path);
+  }
+}
+
+export async function sendMonthlySummaryEmail(params: {
+  profile: UserProfile;
+  business: BusinessWorkspace;
+  month: string;
+}): Promise<{ ok: boolean; emailed: boolean; skipped?: boolean; message: string }> {
+  const { profile, business, month } = params;
+  if (profile.monthlySummaryEmailEnabled === false) {
+    return {
+      ok: true,
+      emailed: false,
+      skipped: true,
+      message: 'Tienes desactivado el resumen mensual por correo en Configuración.',
+    };
+  }
+
+  const summary = buildMonthlySummaryEmailPayload(business, month);
+  try {
+    const res = await fetch('/api/reports/send-monthly-summary', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: profile.email,
+        displayName: profile.displayName,
+        emailOptOut: false,
+        ...summary,
+      }),
+    });
+    const json = (await res.json()) as {
+      ok?: boolean;
+      emailed?: boolean;
+      skipped?: boolean;
+      message?: string;
+    };
+    return {
+      ok: Boolean(json.ok),
+      emailed: Boolean(json.emailed),
+      skipped: json.skipped,
+      message:
+        json.message ||
+        (json.emailed
+          ? `Enviamos tu resumen «Así te fue en este mes» (${summary.monthLabel}) a ${profile.email}.`
+          : 'Preparamos el resumen de tu mes. Para enviarlo automáticamente por correo, configura RESEND_API_KEY en el servidor.'),
+    };
+  } catch {
+    return {
+      ok: false,
+      emailed: false,
+      message: 'No pudimos conectar con el servidor de correo en este momento.',
+    };
+  }
+}
+
+export async function createReferralInviteCode(params: {
+  profile: UserProfile;
+  note?: string;
+}): Promise<string> {
+  const code = buildReferralInviteCodeString(params.profile.uid);
+  const path = `accessCodes/${code}`;
+  try {
+    await setDoc(doc(db, 'accessCodes', code), {
+      code,
+      status: 'unused',
+      note: clampStr(
+        params.note || `Invitación de ${params.profile.displayName || params.profile.email}`,
+        160
+      ),
+      codeKind: 'referral',
+      referrerUid: params.profile.uid,
+      referrerEmail: clampStr(params.profile.email, 160),
+      referrerDisplayName: clampStr(params.profile.displayName || params.profile.email, 100),
+      bonusDays: REFERRAL_BONUS_DAYS,
+      createdBy: params.profile.uid,
+      createdAt: serverTimestamp(),
+    });
+    return code;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.CREATE, path);
+  }
+}
+
+export function subscribeUserReferralCodes(
+  uid: string,
+  onUpdate: (codes: AccessCode[]) => void
+): () => void {
+  const q = query(collection(db, 'accessCodes'), where('referrerUid', '==', uid));
+  return onSnapshot(
+    q,
+    (snap) => {
+      onUpdate(snap.docs.map((d) => d.data() as AccessCode));
+    },
+    (err) => {
+      console.warn('No se pudieron cargar códigos de referido:', err);
+      onUpdate([]);
+    }
+  );
+}
+
+export async function adminGrantReferralBonus(params: {
+  admin: UserProfile;
+  codeDoc: AccessCode;
+  referrerUser: UserProfile;
+}): Promise<{ nextDue: string }> {
+  const { admin, codeDoc, referrerUser } = params;
+  if (codeDoc.status !== 'used' || codeDoc.codeKind !== 'referral') {
+    throw new Error('Este código aún no ha sido canjeado como referido.');
+  }
+  if (codeDoc.referrerRewardApplied) {
+    throw new Error('Este premio ya fue acreditado anteriormente.');
+  }
+
+  const bonusDays = codeDoc.bonusDays ?? REFERRAL_BONUS_DAYS;
+  const nextDue = computeReferralBonusDueDate(referrerUser.nextPaymentDueAt, bonusDays);
+  const nowISO = new Date().toISOString();
+
+  const batch = writeBatch(db);
+  batch.update(doc(db, 'accessCodes', codeDoc.code), {
+    referrerRewardApplied: true,
+    referrerRewardAppliedAt: nowISO,
+  });
+  batch.update(doc(db, 'users', referrerUser.uid), {
+    nextPaymentDueAt: nextDue,
+    referralMonthsEarned: (referrerUser.referralMonthsEarned ?? 0) + 1,
+    updatedAt: serverTimestamp(),
+  });
+
+  try {
+    await batch.commit();
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, `accessCodes/${codeDoc.code}`);
+  }
+
+  try {
+    await recordPaymentAndSendReceipt({
+      id: `ref-${codeDoc.code.replace(/[^a-zA-Z0-9_-]/g, '')}`,
+      uid: referrerUser.uid,
+      email: referrerUser.email,
+      displayName: referrerUser.displayName,
+      planType: referrerUser.planType === 'annual' ? 'annual' : 'monthly',
+      amountClp: 0,
+      transactionId: `BONO-${codeDoc.code}`,
+      paymentMethod: 'codigo_acceso',
+      paidAt: nowISO,
+      periodCoveredEnd: nextDue,
+      notes: `Bono referido (+${bonusDays} días) por invitar a ${codeDoc.usedByEmail || 'otra pyme'}`,
+    });
+  } catch {
+    // No bloquear acreditación
+  }
+
+  await logAdminAction({
+    adminUid: admin.uid,
+    adminEmail: admin.email,
+    action: 'Acreditar +1 mes referido',
+    target: referrerUser.email,
+    details: `Código ${codeDoc.code} canjeado por ${codeDoc.usedByEmail ?? 'pyme'} -> Vence: ${nextDue}`,
+  });
+
+  return { nextDue };
+}
+
+export async function createMercadoPagoRecurringCheckout(params: {
+  profile: UserProfile;
+  planType: PlanType;
+  appConfig: AppConfig;
+  backUrl?: string;
+}): Promise<{
+  ok: boolean;
+  mode: 'preapproval' | 'manual_fallback';
+  checkoutUrl: string;
+  preapprovalId?: string;
+  message: string;
+}> {
+  const fallbackUrl =
+    params.planType === 'annual'
+      ? params.appConfig.annualPaymentUrl || params.appConfig.paymentUrl
+      : params.appConfig.paymentUrl;
+
+  try {
+    const res = await fetch('/api/payments/mercadopago-subscription', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        uid: params.profile.uid,
+        email: params.profile.email,
+        displayName: params.profile.displayName,
+        planType: params.planType,
+        monthlyPriceClp: params.appConfig.monthlyPriceClp ?? MONTHLY_PRICE_CLP,
+        annualPriceClp: params.appConfig.annualPriceClp ?? ANNUAL_PRICE_CLP,
+        fallbackUrl,
+        backUrl: params.backUrl,
+      }),
+    });
+    const data = (await res.json()) as {
+      ok?: boolean;
+      mode?: 'preapproval' | 'manual_fallback';
+      initPoint?: string;
+      fallbackUrl?: string;
+      preapprovalId?: string;
+      message?: string;
+    };
+
+    if (data.mode === 'preapproval' && data.initPoint) {
+      if (data.preapprovalId) {
+        try {
+          await updateDoc(doc(db, 'users', params.profile.uid), {
+            mpPreapprovalId: clampStr(data.preapprovalId, 120),
+            mpSubscriptionStatus: 'pending' as MpSubscriptionStatus,
+            autoRenewEnabled: true,
+            planType: params.planType,
+            updatedAt: serverTimestamp(),
+          });
+        } catch {
+          // Ignorar si falla actualización secundaria
+        }
+      }
+      return {
+        ok: true,
+        mode: 'preapproval',
+        checkoutUrl: data.initPoint,
+        preapprovalId: data.preapprovalId,
+        message:
+          data.message ||
+          'Redirigiendo a Mercado Pago para autorizar tu suscripción automática.',
+      };
+    }
+
+    return {
+      ok: true,
+      mode: 'manual_fallback',
+      checkoutUrl: data.fallbackUrl || fallbackUrl,
+      message:
+        data.message ||
+        'Abrimos el link directo de Mercado Pago como respaldo (si prefieres, también puedes activar con código de acceso).',
+    };
+  } catch {
+    return {
+      ok: true,
+      mode: 'manual_fallback',
+      checkoutUrl: fallbackUrl,
+      message:
+        'Abrimos el link manual oficial de Mercado Pago como respaldo.',
+    };
+  }
+}
+
+export async function verifyMercadoPagoSubscription(params: {
+  preapprovalId: string;
+  profile: UserProfile;
+}): Promise<{
+  verified: boolean;
+  status: MpSubscriptionStatus;
+  message: string;
+}> {
+  try {
+    const res = await fetch('/api/payments/mercadopago-subscription-status', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        preapprovalId: params.preapprovalId,
+        uid: params.profile.uid,
+        email: params.profile.email,
+      }),
+    });
+    const data = (await res.json()) as {
+      verified?: boolean;
+      status?: MpSubscriptionStatus;
+      message?: string;
+    };
+    const nextStatus: MpSubscriptionStatus = data.status || 'pending';
+    try {
+      await updateDoc(doc(db, 'users', params.profile.uid), {
+        mpPreapprovalId: clampStr(params.preapprovalId, 120),
+        mpSubscriptionStatus: nextStatus,
+        autoRenewEnabled: nextStatus === 'authorized' || nextStatus === 'pending',
+        updatedAt: serverTimestamp(),
+      });
+    } catch {
+      // Ignorar si perfil no permite escritura aún
+    }
+    return {
+      verified: Boolean(data.verified),
+      status: nextStatus,
+      message:
+        data.message ||
+        'Estado de tu suscripción automática de Mercado Pago consultado.',
+    };
+  } catch {
+    return {
+      verified: false,
+      status: 'pending',
+      message:
+        'No pudimos confirmar tu suscripción automática ahora. Puedes usar el link manual o adjuntar tu comprobante.',
+    };
+  }
+}
+
+/* ============================================================================
+ * FASE 4: ANALÍTICA DE EMBUDO MÍNIMA Y RESPETUOSA CON LA PRIVACIDAD
+ * (Sin cookies, sin correos, sin UID: solo conteos por sesión anónima efímera)
+ * ============================================================================ */
+
+function getAnonymousSessionId(): string {
+  try {
+    const existing = sessionStorage.getItem('growy_funnel_sid');
+    if (existing && /^[a-zA-Z0-9_-]{4,80}$/.test(existing)) {
+      return existing;
+    }
+    const generated = `sess_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    sessionStorage.setItem('growy_funnel_sid', generated);
+    return generated;
+  } catch {
+    return `sess_${Date.now().toString(36)}`;
+  }
+}
+
+export async function recordFunnelEvent(params: {
+  step: FunnelStep;
+  source?: FunnelEventRecord['source'];
+  planType?: PlanType;
+}): Promise<void> {
+  try {
+    const id = `evt_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
+    const sessionId = getAnonymousSessionId();
+    const day = new Date().toISOString().slice(0, 10);
+    const payload = JSON.parse(
+      JSON.stringify({
+        id,
+        sessionId,
+        step: params.step,
+        source: params.source,
+        planType: params.planType,
+        day,
+      })
+    );
+    await setDoc(doc(db, 'funnelEvents', id), {
+      ...payload,
+      createdAt: serverTimestamp(),
+    });
+  } catch {
+    // Nunca interrumpir al usuario si un bloqueador de red o estado offline impide registrar métricas
+  }
+}
+
+export function trackFunnelStepOncePerSession(
+  step: FunnelStep,
+  options?: { source?: FunnelEventRecord['source']; planType?: PlanType }
+): void {
+  try {
+    const key = `growy_funnel_step_${step}`;
+    if (sessionStorage.getItem(key) === '1') return;
+    sessionStorage.setItem(key, '1');
+  } catch {
+    // Continuar aunque sessionStorage no esté disponible
+  }
+  void recordFunnelEvent({
+    step,
+    source: options?.source,
+    planType: options?.planType,
+  });
+}
+
+export function subscribeFunnelEventsAdmin(
+  onUpdate: (events: FunnelEventRecord[]) => void
+): () => void {
+  const q = query(
+    collection(db, 'funnelEvents'),
+    orderBy('createdAt', 'desc'),
+    limit(500)
+  );
+  return onSnapshot(
+    q,
+    (snap) => {
+      onUpdate(snap.docs.map((d) => d.data() as FunnelEventRecord));
+    },
+    (err) => {
+      console.warn('No se pudieron cargar métricas de embudo:', err);
+      onUpdate([]);
+    }
+  );
+}
+
+

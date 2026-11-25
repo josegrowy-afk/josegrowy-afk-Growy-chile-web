@@ -1,13 +1,28 @@
-import React, { useMemo } from 'react';
-import { AlertTriangle, Banknote, Layers, ShieldAlert } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { AlertTriangle, Banknote, GitBranch, Layers, RotateCcw, ShieldAlert } from 'lucide-react';
 import type { ChartConfiguration } from 'chart.js';
 import { formatCurrency } from '../finance/formulas';
 import {
   calculateCashFlowProjection,
   calculateWorkingCapital,
 } from '../finance/smeIntelligence';
-import type { BusinessWorkspace, WorkingCapitalExtras } from '../types/finance';
+import {
+  DEFAULT_SCENARIO_CONFIG,
+  calculateCashFlowScenarios,
+} from '../finance/phase3Insights';
+import type {
+  BusinessWorkspace,
+  CashFlowScenarioConfig,
+  WorkingCapitalExtras,
+} from '../types/finance';
 import { ChartCanvas } from './ChartCanvas';
+import { SectionTitle, SolidCard } from './design-system';
+
+function readCssToken(name: string, fallback: string): string {
+  if (typeof window === 'undefined' || !document?.documentElement) return fallback;
+  const val = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return val || fallback;
+}
 
 interface CashFlowAndWorkingCapitalPanelProps {
   business: BusinessWorkspace;
@@ -19,8 +34,18 @@ export const CashFlowAndWorkingCapitalPanel: React.FC<
 > = ({ business, onUpdateBusiness }) => {
   const cf = useMemo(() => calculateCashFlowProjection(business), [business]);
   const wc = useMemo(() => calculateWorkingCapital(business, cf), [business, cf]);
+  const scenarioResult = useMemo(() => calculateCashFlowScenarios(business), [business]);
 
   const extras = business.workingCapitalExtras ?? {};
+
+  const updateScenarioField = (key: keyof CashFlowScenarioConfig, val: number) => {
+    onUpdateBusiness({
+      cashFlowScenarioConfig: {
+        ...scenarioResult.config,
+        [key]: Number.isFinite(val) ? val : 0,
+      },
+    });
+  };
 
   const updateExtra = (key: keyof WorkingCapitalExtras, val: number) => {
     onUpdateBusiness({
@@ -30,6 +55,32 @@ export const CashFlowAndWorkingCapitalPanel: React.FC<
       },
     });
   };
+
+  const [themeKey, setThemeKey] = useState(() =>
+    typeof document !== 'undefined' ? document.documentElement.className : 'light'
+  );
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const obs = new MutationObserver(() => {
+      setThemeKey(document.documentElement.className);
+    });
+    obs.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+    return () => obs.disconnect();
+  }, []);
+
+  const palette = useMemo(
+    () => ({
+      navy: readCssToken('--chart-income', '#1F1B2E'),
+      lilac: readCssToken('--chart-expense', '#CFC5EE'),
+      sage: readCssToken('--chart-doughnut-3', '#3F7A5C'),
+      coral: readCssToken('--chart-doughnut-2', '#F6A59E'),
+      danger: readCssToken('--danger-text', '#B4474A'),
+      grid: readCssToken('--chart-grid', 'rgba(31, 27, 46, 0.06)'),
+      tick: readCssToken('--chart-tick', '#5A5470'),
+    }),
+    [themeKey]
+  );
 
   const cashFlowChartConfig = useMemo<ChartConfiguration>(() => {
     const slice = cf.rows.slice(0, 12);
@@ -42,8 +93,8 @@ export const CashFlowAndWorkingCapitalPanel: React.FC<
             type: 'line',
             label: 'Saldo proyectado final',
             data: slice.map((r) => Math.round(r.closingBalance)),
-            borderColor: '#625296',
-            backgroundColor: 'rgba(98, 82, 150, 0.14)',
+            borderColor: palette.navy,
+            backgroundColor: 'rgba(207, 197, 238, 0.25)',
             borderWidth: 2.5,
             tension: 0.3,
             pointRadius: 3.5,
@@ -52,15 +103,17 @@ export const CashFlowAndWorkingCapitalPanel: React.FC<
             type: 'bar',
             label: 'Entradas totales',
             data: slice.map((r) => Math.round(r.totalInflows)),
-            backgroundColor: 'rgba(30, 122, 107, 0.78)',
-            borderRadius: 6,
+            backgroundColor: palette.sage,
+            borderRadius: 10,
+            borderSkipped: false,
           },
           {
             type: 'bar',
             label: 'Salidas totales',
             data: slice.map((r) => Math.round(r.totalOutflows)),
-            backgroundColor: 'rgba(229, 115, 121, 0.8)',
-            borderRadius: 6,
+            backgroundColor: palette.coral,
+            borderRadius: 10,
+            borderSkipped: false,
           },
         ],
       },
@@ -68,15 +121,23 @@ export const CashFlowAndWorkingCapitalPanel: React.FC<
         responsive: true,
         maintainAspectRatio: false,
         scales: {
+          x: {
+            grid: { display: false },
+            border: { display: false },
+            ticks: { color: palette.tick },
+          },
           y: {
+            border: { display: false },
+            grid: { color: palette.grid },
             ticks: {
+              color: palette.tick,
               callback: (v) => formatCurrency(Number(v), business.currency),
             },
           },
         },
       },
     };
-  }, [cf.rows, business.currency]);
+  }, [cf.rows, business.currency, palette]);
 
   const workingCapitalChartConfig = useMemo<ChartConfiguration>(() => {
     return {
@@ -87,8 +148,8 @@ export const CashFlowAndWorkingCapitalPanel: React.FC<
           {
             label: 'Capital de trabajo neto',
             data: wc.evolution.map((e) => Math.round(e.netWorkingCapital)),
-            borderColor: '#1E7A6B',
-            backgroundColor: 'rgba(30, 122, 107, 0.14)',
+            borderColor: palette.sage,
+            backgroundColor: 'rgba(111, 174, 138, 0.16)',
             fill: true,
             tension: 0.3,
             pointRadius: 3.5,
@@ -96,7 +157,7 @@ export const CashFlowAndWorkingCapitalPanel: React.FC<
           {
             label: 'Activo corriente',
             data: wc.evolution.map((e) => Math.round(e.currentAssets)),
-            borderColor: '#625296',
+            borderColor: palette.navy,
             borderDash: [4, 4],
             borderWidth: 1.8,
             pointRadius: 2,
@@ -104,7 +165,7 @@ export const CashFlowAndWorkingCapitalPanel: React.FC<
           {
             label: 'Pasivo corriente',
             data: wc.evolution.map((e) => Math.round(e.currentLiabilities)),
-            borderColor: '#E57379',
+            borderColor: palette.danger,
             borderDash: [4, 4],
             borderWidth: 1.8,
             pointRadius: 2,
@@ -115,33 +176,93 @@ export const CashFlowAndWorkingCapitalPanel: React.FC<
         responsive: true,
         maintainAspectRatio: false,
         scales: {
+          x: {
+            grid: { display: false },
+            border: { display: false },
+            ticks: { color: palette.tick },
+          },
           y: {
+            border: { display: false },
+            grid: { color: palette.grid },
             ticks: {
+              color: palette.tick,
               callback: (v) => formatCurrency(Number(v), business.currency),
             },
           },
         },
       },
     };
-  }, [wc.evolution, business.currency]);
+  }, [wc.evolution, business.currency, palette]);
+
+  const scenarioChartConfig = useMemo<ChartConfiguration>(() => {
+    return {
+      type: 'line',
+      data: {
+        labels: scenarioResult.rows.map((r) => r.monthLabel),
+        datasets: [
+          {
+            label: 'Optimista',
+            data: scenarioResult.rows.map((r) => r.optimisticClosing),
+            borderColor: palette.sage,
+            backgroundColor: 'rgba(111, 174, 138, 0.12)',
+            borderWidth: 2.2,
+            tension: 0.3,
+            pointRadius: 3,
+          },
+          {
+            label: 'Base',
+            data: scenarioResult.rows.map((r) => r.baseClosing),
+            borderColor: palette.navy,
+            borderWidth: 2.5,
+            tension: 0.3,
+            pointRadius: 3,
+          },
+          {
+            label: 'Pesimista',
+            data: scenarioResult.rows.map((r) => r.pessimisticClosing),
+            borderColor: palette.danger,
+            borderDash: [5, 4],
+            borderWidth: 2.2,
+            tension: 0.3,
+            pointRadius: 3,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: {
+          x: {
+            grid: { display: false },
+            border: { display: false },
+            ticks: { color: palette.tick },
+          },
+          y: {
+            border: { display: false },
+            grid: { color: palette.grid },
+            ticks: {
+              color: palette.tick,
+              callback: (v) => formatCurrency(Number(v), business.currency),
+            },
+          },
+        },
+      },
+    };
+  }, [scenarioResult.rows, business.currency, palette]);
 
   return (
     <div className="space-y-8">
       {/* CONFIGURACIÓN DE SALDO INICIAL DE CAJA */}
-      <section className="boho-card p-6 space-y-4">
+      <SolidCard as="section" className="p-6 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-2.5">
-            <Banknote className="w-5 h-5 text-[var(--pos-text)] shrink-0" />
-            <div>
-              <h2 className="font-display text-lg font-bold text-[var(--text-primary)]">
-                Saldo inicial real de caja y equivalentes
-              </h2>
-              <p className="text-xs text-[var(--text-secondary)]">
-                Define con cuánto efectivo real (bancos + caja) inicia este negocio antes de sumar
-                tus cobros y restar pagos reales. Las ventas a crédito pendientes no se consideran
-                dinero disponible.
-              </p>
-            </div>
+          <div className="flex items-start gap-2.5 max-w-2xl">
+            <Banknote className="w-5 h-5 text-[var(--pos-text)] shrink-0 mt-1" />
+            <SectionTitle
+              as="h2"
+              size="sm"
+              title="Saldo *inicial* real de caja y equivalentes"
+              subtitle="Define con cuánto efectivo real (bancos + caja) inicia este negocio antes de sumar tus cobros y restar pagos reales. Las ventas a crédito pendientes no se consideran dinero disponible."
+            />
           </div>
 
           <div className="flex items-center gap-2">
@@ -165,7 +286,7 @@ export const CashFlowAndWorkingCapitalPanel: React.FC<
 
         {/* KPIs FLUJO DE CAJA */}
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 pt-2">
-          <div className="rounded-3xl p-4 bg-[var(--pos-soft)] border border-[var(--pos-border)]">
+          <div className="rounded-[24px] p-4 bg-[var(--pos-soft)] border border-[var(--pos-border)]">
             <p className="text-xs font-semibold text-[var(--pos-muted)]">
               Saldo disponible real hoy
             </p>
@@ -183,7 +304,7 @@ export const CashFlowAndWorkingCapitalPanel: React.FC<
             </p>
           </div>
 
-          <div className="rounded-3xl p-4 bg-[var(--sec-soft)] border border-[var(--sec-border)]">
+          <div className="rounded-[24px] p-4 bg-[var(--sec-soft)] border border-[var(--sec-border)]">
             <p className="text-xs font-semibold text-[var(--sec-muted)]">
               Flujo neto proyectado (12M)
             </p>
@@ -201,7 +322,7 @@ export const CashFlowAndWorkingCapitalPanel: React.FC<
             </p>
           </div>
 
-          <div className="rounded-3xl p-4 bg-[var(--accent-soft)] border border-[var(--accent-soft-border)]">
+          <div className="rounded-[24px] p-4 bg-[var(--accent-soft)] border border-[var(--accent-soft-border)]">
             <p className="text-xs font-semibold text-[var(--accent-soft-muted)]">
               Saldo final proyectado (Mes 12)
             </p>
@@ -219,7 +340,7 @@ export const CashFlowAndWorkingCapitalPanel: React.FC<
             </p>
           </div>
 
-          <div className="rounded-3xl p-4 bg-[var(--warn-soft)] border border-[var(--warn-border)]">
+          <div className="rounded-[24px] p-4 bg-[var(--warn-soft)] border border-[var(--warn-border)]">
             <p className="text-xs font-semibold text-[var(--warn-muted)]">
               Meses con déficit de liquidez
             </p>
@@ -258,20 +379,16 @@ export const CashFlowAndWorkingCapitalPanel: React.FC<
             </div>
           </div>
         )}
-      </section>
+      </SolidCard>
 
       {/* GRÁFICO Y TABLA FLUJO DE CAJA MENSUAL */}
-      <section className="boho-card p-6 space-y-5">
-        <div>
-          <h3 className="font-display text-lg font-bold text-[var(--text-primary)]">
-            Flujo de caja mensual y anual (Movimientos reales vs. proyectados)
-          </h3>
-          <p className="text-xs text-[var(--text-secondary)]">
-            Diferencia ingresos/egresos reales ya ejecutados de cobros esperados (CxC), obligaciones
-            programadas (CxP: proveedores, remuneraciones, impuestos, créditos) y ventas
-            proyectadas.
-          </p>
-        </div>
+      <SolidCard as="section" className="p-6 space-y-5">
+        <SectionTitle
+          as="h3"
+          size="sm"
+          title="Flujo de caja *mensual* y anual"
+          subtitle="Diferencia ingresos y egresos reales ya ejecutados de cobros esperados (CxC), obligaciones programadas (CxP: proveedores, remuneraciones, impuestos, créditos) y ventas proyectadas."
+        />
 
         <ChartCanvas
           config={cashFlowChartConfig}
@@ -366,22 +483,146 @@ export const CashFlowAndWorkingCapitalPanel: React.FC<
             </tbody>
           </table>
         </div>
-      </section>
+      </SolidCard>
 
-      {/* SECCIÓN CAPITAL DE TRABAJO */}
-      <section className="boho-card p-6 space-y-6">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="flex items-center gap-2.5">
-            <Layers className="w-5 h-5 text-[var(--sec-text)] shrink-0" />
-            <div>
-              <h2 className="font-display text-xl font-bold text-[var(--text-primary)]">
-                Capital de Trabajo = Activo Corriente − Pasivo Corriente
-              </h2>
-              <p className="text-xs text-[var(--text-secondary)]">
-                Calculado automáticamente desde tu caja real, cuentas por cobrar, inventario
-                valorizado y cuentas por pagar sin duplicar movimientos.
+      {/* 3.2 SIMULADOR DE ESCENARIOS BASE, OPTIMISTA Y PESIMISTA */}
+      <SolidCard as="section" className="p-6 space-y-5">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="flex items-start gap-2.5 max-w-2xl">
+            <GitBranch className="w-5 h-5 text-[var(--sec-text)] shrink-0 mt-1" />
+            <SectionTitle
+              as="h2"
+              size="sm"
+              title="Escenarios de *flujo* de caja: Base, Optimista y Pesimista"
+              subtitle="Simula qué pasa con tu caja en los próximos 12 meses si tus cobros o gastos suben o bajan respecto al plan base."
+            />
+          </div>
+
+          <button
+            type="button"
+            onClick={() =>
+              onUpdateBusiness({ cashFlowScenarioConfig: { ...DEFAULT_SCENARIO_CONFIG } })
+            }
+            className="min-h-[36px] px-4 rounded-full border border-[var(--border-hairline)] text-xs font-semibold inline-flex items-center gap-1.5 hover:bg-[var(--bg-soft)] cursor-pointer"
+          >
+            <RotateCcw className="w-3.5 h-3.5" />
+            <span>Restablecer %</span>
+          </button>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 p-4 rounded-2xl bg-[var(--bg-soft-alt)] border border-[var(--border-hairline)]">
+          <div>
+            <label className="block text-[11px] font-semibold text-[var(--pos-text)] mb-1">
+              Optimista · Entradas (%)
+            </label>
+            <input
+              type="number"
+              step={1}
+              value={scenarioResult.config.optimisticInflowPct}
+              onChange={(e) =>
+                updateScenarioField('optimisticInflowPct', Number(e.target.value))
+              }
+              className="boho-input w-full font-mono tabular-nums text-xs"
+            />
+          </div>
+          <div>
+            <label className="block text-[11px] font-semibold text-[var(--pos-text)] mb-1">
+              Optimista · Salidas (%)
+            </label>
+            <input
+              type="number"
+              step={1}
+              value={scenarioResult.config.optimisticOutflowPct}
+              onChange={(e) =>
+                updateScenarioField('optimisticOutflowPct', Number(e.target.value))
+              }
+              className="boho-input w-full font-mono tabular-nums text-xs"
+            />
+          </div>
+          <div>
+            <label className="block text-[11px] font-semibold text-[var(--danger-text)] mb-1">
+              Pesimista · Entradas (%)
+            </label>
+            <input
+              type="number"
+              step={1}
+              value={scenarioResult.config.pessimisticInflowPct}
+              onChange={(e) =>
+                updateScenarioField('pessimisticInflowPct', Number(e.target.value))
+              }
+              className="boho-input w-full font-mono tabular-nums text-xs"
+            />
+          </div>
+          <div>
+            <label className="block text-[11px] font-semibold text-[var(--danger-text)] mb-1">
+              Pesimista · Salidas (%)
+            </label>
+            <input
+              type="number"
+              step={1}
+              value={scenarioResult.config.pessimisticOutflowPct}
+              onChange={(e) =>
+                updateScenarioField('pessimisticOutflowPct', Number(e.target.value))
+              }
+              className="boho-input w-full font-mono tabular-nums text-xs"
+            />
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {[
+            {
+              s: scenarioResult.scenarios.optimistic,
+              box: 'bg-[var(--pos-soft)] border-[var(--pos-border)]',
+              titleColor: 'text-[var(--pos-text)]',
+            },
+            {
+              s: scenarioResult.scenarios.base,
+              box: 'bg-[var(--sec-soft)] border-[var(--sec-border)]',
+              titleColor: 'text-[var(--sec-text)]',
+            },
+            {
+              s: scenarioResult.scenarios.pessimistic,
+              box: 'bg-[var(--danger-soft)] border-[var(--border-hairline)]',
+              titleColor: 'text-[var(--danger-text)]',
+            },
+          ].map(({ s, box, titleColor }) => (
+            <div key={s.id} className={`rounded-[24px] p-4 border space-y-1.5 ${box}`}>
+              <p className={`text-xs font-bold ${titleColor}`}>{s.label}</p>
+              <p className="text-[11px] text-[var(--text-secondary)]">
+                Entradas {s.inflowDeltaPct >= 0 ? `+${s.inflowDeltaPct}%` : `${s.inflowDeltaPct}%`} · Salidas{' '}
+                {s.outflowDeltaPct >= 0 ? `+${s.outflowDeltaPct}%` : `${s.outflowDeltaPct}%`}
+              </p>
+              <p className="font-mono tabular-nums text-xl font-bold text-[var(--text-primary)]">
+                {formatCurrency(s.endingBalance12M, business.currency)}
+              </p>
+              <p className="text-[11px] text-[var(--text-secondary)]">
+                {s.firstDeficitMonthLabel
+                  ? `Cae bajo cero en ${s.firstDeficitMonthLabel} (${s.deficitMonthsCount} mes/es)`
+                  : `Sin meses en rojo · Mínimo: ${formatCurrency(s.lowestBalance12M, business.currency)}`}
               </p>
             </div>
+          ))}
+        </div>
+
+        <ChartCanvas
+          config={scenarioChartConfig}
+          heightClass="h-64"
+          ariaLabel="Comparación de saldo final proyectado en escenarios base, optimista y pesimista"
+        />
+      </SolidCard>
+
+      {/* SECCIÓN CAPITAL DE TRABAJO */}
+      <SolidCard as="section" className="p-6 space-y-6">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="flex items-start gap-2.5 max-w-2xl">
+            <Layers className="w-5 h-5 text-[var(--sec-text)] shrink-0 mt-1" />
+            <SectionTitle
+              as="h2"
+              size="sm"
+              title="Capital de *Trabajo*"
+              subtitle="Calculado automáticamente desde tu caja real, cuentas por cobrar, inventario valorizado y cuentas por pagar sin duplicar movimientos."
+            />
           </div>
 
           <div className="text-left sm:text-right">
@@ -527,7 +768,7 @@ export const CashFlowAndWorkingCapitalPanel: React.FC<
             ariaLabel="Evolución mensual de capital de trabajo"
           />
         </div>
-      </section>
+      </SolidCard>
     </div>
   );
 };

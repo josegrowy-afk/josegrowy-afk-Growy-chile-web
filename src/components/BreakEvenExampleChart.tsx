@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { SolidCard } from './design-system/GlassCard';
 
 const FIXED_COSTS = 300000;
 const VARIABLE_COST_PER_UNIT = 3000;
@@ -46,25 +47,25 @@ export const BreakEvenExampleChart: React.FC = () => {
   const yCurrentCost = yFor(totalCost);
 
   return (
-    <div className="boho-card p-5 sm:p-7 space-y-5">
+    <SolidCard radius="lg" className="p-5 sm:p-7 space-y-5">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
-          <p className="text-xs font-semibold text-[var(--sec-text)]">
+          <p className="text-xs font-bold tracking-[0.04em] uppercase text-[var(--sec-text)]">
             Taller de velas artesanales · Ejemplo interactivo
           </p>
-          <p className="text-xs text-[var(--text-secondary)] mt-0.5 tabular-nums">
+          <p className="text-xs text-[var(--text-secondary)] mt-0.5 font-mono tabular-nums">
             Fijos {formatClp(FIXED_COSTS)} · Variable {formatClp(VARIABLE_COST_PER_UNIT)}/vela ·
             Precio {formatClp(PRICE_PER_UNIT)}/vela
           </p>
         </div>
 
-        <div className="flex items-center gap-2 text-xs font-medium">
+        <div className="flex flex-wrap items-center gap-2 text-xs font-medium">
           <button
             type="button"
             onClick={() => setUnits(30)}
-            className={`px-3 py-1.5 rounded-xl border transition-colors cursor-pointer ${
+            className={`min-h-[38px] px-3.5 py-1.5 rounded-full border transition-colors cursor-pointer ${
               units === 30
-                ? 'bg-[var(--accent-soft)] border-[var(--accent-soft-border)] text-[var(--accent-strong)] font-semibold'
+                ? 'bg-[var(--accent-soft)] border-[var(--accent-soft-border)] text-[var(--accent-strong)] font-bold'
                 : 'bg-[var(--bg-soft-alt)] border-[var(--border-hairline)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
             }`}
           >
@@ -73,9 +74,9 @@ export const BreakEvenExampleChart: React.FC = () => {
           <button
             type="button"
             onClick={() => setUnits(50)}
-            className={`px-3 py-1.5 rounded-xl border transition-colors cursor-pointer ${
+            className={`min-h-[38px] px-3.5 py-1.5 rounded-full border transition-colors cursor-pointer ${
               units === 50
-                ? 'bg-[var(--warn-soft)] border-[var(--warn-border)] text-[var(--warn-text)] font-semibold'
+                ? 'bg-[var(--warn-soft)] border-[var(--warn-border)] text-[var(--warn-text)] font-bold'
                 : 'bg-[var(--bg-soft-alt)] border-[var(--border-hairline)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
             }`}
           >
@@ -84,9 +85,9 @@ export const BreakEvenExampleChart: React.FC = () => {
           <button
             type="button"
             onClick={() => setUnits(75)}
-            className={`px-3 py-1.5 rounded-xl border transition-colors cursor-pointer ${
+            className={`min-h-[38px] px-3.5 py-1.5 rounded-full border transition-colors cursor-pointer ${
               units === 75
-                ? 'bg-[var(--pos-soft)] border-[var(--pos-border)] text-[var(--pos-text)] font-semibold'
+                ? 'bg-[var(--pos-soft)] border-[var(--pos-border)] text-[var(--pos-text)] font-bold'
                 : 'bg-[var(--bg-soft-alt)] border-[var(--border-hairline)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
             }`}
           >
@@ -387,6 +388,6 @@ export const BreakEvenExampleChart: React.FC = () => {
           </div>
         </div>
       </div>
-    </div>
+    </SolidCard>
   );
 };

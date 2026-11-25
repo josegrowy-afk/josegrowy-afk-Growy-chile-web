@@ -9,6 +9,7 @@ import {
 import { calculateCashFlowProjection } from '../finance/smeIntelligence';
 import type { BusinessWorkspace } from '../types/finance';
 import { CashFlowAndWorkingCapitalPanel } from './CashFlowAndWorkingCapitalPanel';
+import { SectionTitle, SolidCard } from './design-system';
 
 export type ProjectionsSubTab = 'sales' | 'cashflow';
 
@@ -102,13 +103,22 @@ export const ProjectionsView: React.FC<ProjectionsViewProps> = ({
           role="tab"
           aria-selected={subTab === 'sales'}
           onClick={() => setSubTab('sales')}
+          style={
+            subTab === 'sales'
+              ? { backgroundColor: 'var(--btn-navy-bg)', color: 'var(--btn-navy-text)' }
+              : undefined
+          }
           className={`min-h-[40px] px-4 py-1.5 rounded-full text-xs font-bold inline-flex items-center gap-2 transition-all cursor-pointer whitespace-nowrap shrink-0 ${
             subTab === 'sales'
-              ? 'bg-[var(--bg-surface)] text-[var(--text-primary)] shadow-xs'
+              ? 'shadow-xs'
               : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
           }`}
         >
-          <CalendarRange className="w-4 h-4 text-[var(--accent-strong)]" />
+          <CalendarRange
+            className={`w-4 h-4 ${
+              subTab === 'sales' ? '' : 'text-[var(--accent-strong)]'
+            }`}
+          />
           <span>Proyección de ventas</span>
         </button>
 
@@ -117,13 +127,22 @@ export const ProjectionsView: React.FC<ProjectionsViewProps> = ({
           role="tab"
           aria-selected={subTab === 'cashflow'}
           onClick={() => setSubTab('cashflow')}
+          style={
+            subTab === 'cashflow'
+              ? { backgroundColor: 'var(--btn-navy-bg)', color: 'var(--btn-navy-text)' }
+              : undefined
+          }
           className={`min-h-[40px] px-4 py-1.5 rounded-full text-xs font-bold inline-flex items-center gap-2 transition-all cursor-pointer whitespace-nowrap shrink-0 ${
             subTab === 'cashflow'
-              ? 'bg-[var(--bg-surface)] text-[var(--text-primary)] shadow-xs'
+              ? 'shadow-xs'
               : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
           }`}
         >
-          <Wallet className="w-4 h-4 text-[var(--pos-text)]" />
+          <Wallet
+            className={`w-4 h-4 ${
+              subTab === 'cashflow' ? '' : 'text-[var(--pos-text)]'
+            }`}
+          />
           <span>
             Flujo de caja y capital de trabajo
             {deficitCount > 0 ? ` · ${deficitCount} déficit` : ''}
@@ -135,56 +154,48 @@ export const ProjectionsView: React.FC<ProjectionsViewProps> = ({
         <CashFlowAndWorkingCapitalPanel business={business} onUpdateBusiness={onUpdateBusiness} />
       ) : (
         <div className="space-y-6">
-      <header className="flex flex-col lg:flex-row lg:items-end justify-between gap-4">
-        <div>
-          <p className="text-xs font-semibold text-[var(--text-secondary)]">
-            Planificación a futuro · Mínimo 12 meses
-          </p>
-          <h1 className="font-display text-2xl sm:text-3xl font-bold tracking-tight text-[var(--text-primary)] mt-1">
-            Proyección{' '}
-            <em className="font-editorial italic font-semibold text-[var(--accent-strong)]">
-              mensual
-            </em>{' '}
-            de ventas y utilidades
-          </h1>
-        </div>
+      <SectionTitle
+        as="h1"
+        eyebrow="Planificación a futuro · Mínimo 12 meses"
+        title="Proyección *mensual* de ventas y utilidades"
+        rightSlot={
+          <div className="flex flex-wrap items-center gap-4">
+            <label className="text-xs font-semibold text-[var(--text-secondary)]">
+              Crecimiento mensual (%)
+              <input
+                type="number"
+                min={-20}
+                max={100}
+                step={0.5}
+                value={business.monthlyGrowthPercent}
+                onChange={(e) =>
+                  onUpdateBusiness({ monthlyGrowthPercent: Number(e.target.value) || 0 })
+                }
+                className="boho-input ml-2 w-24 font-mono tabular-nums"
+              />
+            </label>
 
-        <div className="flex flex-wrap items-center gap-4">
-          <label className="text-xs font-semibold text-[var(--text-secondary)]">
-            Crecimiento mensual (%)
-            <input
-              type="number"
-              min={-20}
-              max={100}
-              step={0.5}
-              value={business.monthlyGrowthPercent}
-              onChange={(e) =>
-                onUpdateBusiness({ monthlyGrowthPercent: Number(e.target.value) || 0 })
-              }
-              className="boho-input ml-2 w-24 font-mono tabular-nums"
-            />
-          </label>
-
-          <label className="text-xs font-semibold text-[var(--text-secondary)]">
-            Horizonte
-            <select
-              value={business.projectionMonthsCount}
-              onChange={(e) =>
-                onUpdateBusiness({ projectionMonthsCount: Math.max(12, Number(e.target.value)) })
-              }
-              className="boho-input ml-2 font-semibold"
-            >
-              <option value={12}>12 meses</option>
-              <option value={18}>18 meses</option>
-              <option value={24}>24 meses</option>
-            </select>
-          </label>
-        </div>
-      </header>
+            <label className="text-xs font-semibold text-[var(--text-secondary)]">
+              Horizonte
+              <select
+                value={business.projectionMonthsCount}
+                onChange={(e) =>
+                  onUpdateBusiness({ projectionMonthsCount: Math.max(12, Number(e.target.value)) })
+                }
+                className="boho-input ml-2 font-semibold"
+              >
+                <option value={12}>12 meses</option>
+                <option value={18}>18 meses</option>
+                <option value={24}>24 meses</option>
+              </select>
+            </label>
+          </div>
+        }
+      />
 
       {/* Unidades base del primer mes */}
       {business.products.length > 0 && (
-        <section className="boho-card p-5">
+        <SolidCard as="section" className="p-5">
           <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
             <h2 className="text-sm font-bold text-[var(--text-primary)]">
               Unidades base del mes inicial (a partir de aquí crece{' '}
@@ -217,11 +228,11 @@ export const ProjectionsView: React.FC<ProjectionsViewProps> = ({
               );
             })}
           </div>
-        </section>
+        </SolidCard>
       )}
 
       {/* Tabla editable mes a mes */}
-      <section className="boho-card p-4 sm:p-6">
+      <SolidCard as="section" className="p-4 sm:p-6">
         <div className="overflow-x-auto">
           <table className="w-full text-sm text-left border-collapse min-w-[780px]">
             <thead>
@@ -336,7 +347,7 @@ export const ProjectionsView: React.FC<ProjectionsViewProps> = ({
             </tfoot>
           </table>
         </div>
-      </section>
+      </SolidCard>
         </div>
       )}
     </div>

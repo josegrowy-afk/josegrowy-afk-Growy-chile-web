@@ -1,5 +1,15 @@
-import React, { useEffect, useState } from 'react';
-import { onAuthStateChanged, signInWithPopup, signOut } from 'firebase/auth';
+import React, { Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  createUserWithEmailAndPassword,
+  onAuthStateChanged,
+  sendEmailVerification,
+  sendPasswordResetEmail,
+  signInWithEmailAndPassword,
+  signInWithPopup,
+  signOut,
+  updateProfile,
+  type User,
+} from 'firebase/auth';
 import {
   AlertTriangle,
   Apple,
@@ -23,11 +33,13 @@ import {
 } from 'lucide-react';
 import { ActualsView, type ActualsSubTab } from './components/ActualsView';
 import { AdminView } from './components/AdminView';
+import { AuthModal, type EmailAuthSubmitPayload } from './components/AuthModal';
 import { BusinessSettingsView } from './components/BusinessSettingsView';
 import { EquilibrioProductIcon, GrowyLogoMark } from './components/GrowyMotifs';
 import { CalculatorView } from './components/CalculatorView';
 import { CatalogAndCostsView, type CatalogSubTab } from './components/CatalogAndCostsView';
 import { DashboardView, type DashboardSubTab } from './components/DashboardView';
+import { EmailVerificationWall } from './components/EmailVerificationWall';
 import { FaqAndSupportView } from './components/FaqAndSupportView';
 import { LandingPage } from './components/LandingPage';
 import { OnboardingTourModal } from './components/OnboardingTourModal';
@@ -38,7 +50,20 @@ import { ProjectionsView, type ProjectionsSubTab } from './components/Projection
 import { SimpleExplanationView } from './components/SimpleExplanationView';
 import { GROWY_EASE, GrowyMotionRoot, ViewTransition } from './components/MotionPrimitives';
 import { AnimatePresence, motion } from 'motion/react';
-import { createEmptyBusiness } from './data/demoData';
+import {
+  BackdropBlobs,
+  EditorialText,
+  FloatingNav,
+  GlassCard,
+  SolidCard,
+  type FloatingNavItem,
+} from './components/design-system';
+import { createEmptyBusiness, createPublicBakeryCafeDemoBusiness } from './data/demoData';
+import {
+  calculatePlanComparisonFromConfig,
+  clearPublicBreakEvenDraft,
+  readPublicBreakEvenDraft,
+} from './finance/phase1Insights';
 import {
   ANNUAL_DISCOUNT_LABEL,
   ANNUAL_PRICE_CLP,
@@ -70,7 +95,9 @@ import {
   subscribeUserBusinesses,
   subscribeUserPaymentHistory,
   subscribeUserProfile,
+  trackFunnelStepOncePerSession,
   verifyMercadoPagoPayment,
+  verifyMercadoPagoSubscription,
 } from './firebase/services';
 import type {
   AppConfig,
@@ -83,6 +110,14 @@ import type {
   UserProfile,
   ViewTab,
 } from './types/finance';
+
+const LazyDesignSystemShowcase = import.meta.env.DEV
+  ? React.lazy(() =>
+      import('./components/DesignSystemShowcase').then((m) => ({
+        default: m.DesignSystemShowcase,
+      }))
+    )
+  : null;
 
 export default function App() {
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
@@ -106,6 +141,8 @@ export default function App() {
 
   const [authReady, setAuthReady] = useState(false);
   const [authUid, setAuthUid] = useState<string | null>(null);
+  const [unverifiedUser, setUnverifiedUser] = useState<User | null>(null);
+  const [authModalOpen, setAuthModalOpen] = useState(false);
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
@@ -120,14 +157,46 @@ export default function App() {
   const [actualsSubTab, setActualsSubTab] = useState<ActualsSubTab>('cash');
   const [catalogSubTab, setCatalogSubTab] = useState<CatalogSubTab>('catalog');
   const [showLandingExplicit, setShowLandingExplicit] = useState(false);
+  const [designSystemMode, setDesignSystemMode] = useState<boolean>(() => {
+    if (!import.meta.env.DEV) return false;
+    try {
+      return new URLSearchParams(window.location.search).get('design-system') === '1';
+    } catch {
+      return false;
+    }
+  });
+  const [guestDemoMode, setGuestDemoMode] = useState<boolean>(() => {
+    try {
+      return new URLSearchParams(window.location.search).get('demo') === '1';
+    } catch {
+      return false;
+    }
+  });
+  const [guestDemoBusiness, setGuestDemoBusiness] = useState<BusinessWorkspace>(() =>
+    createPublicBakeryCafeDemoBusiness()
+  );
   const [openTicketsCount, setOpenTicketsCount] = useState(0);
   const [mpVerificationNotice, setMpVerificationNotice] = useState<string | null>(null);
   const [checkedMpPaymentId, setCheckedMpPaymentId] = useState<string | null>(null);
+  const [checkedMpPreapprovalId, setCheckedMpPreapprovalId] = useState<string | null>(null);
   const [showProblemModal, setShowProblemModal] = useState(false);
   const [showOnboardingTour, setShowOnboardingTour] = useState(false);
   const [billingDayPick, setBillingDayPick] = useState<BillingDay | null>(null);
   const [savingBillingDay, setSavingBillingDay] = useState(false);
   const [billingDayError, setBillingDayError] = useState<string | null>(null);
+  const [draftCarryNotice, setDraftCarryNotice] = useState<string | null>(null);
+  const handledDraftRef = useRef(false);
+
+  const planSummary = useMemo(() => calculatePlanComparisonFromConfig(appConfig), [appConfig]);
+
+  const userInitials = useMemo(() => {
+    const raw = (profile?.displayName || profile?.email || 'GR').trim();
+    const parts = raw.split(/\s+/).filter(Boolean);
+    if (parts.length >= 2) {
+      return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+    }
+    return raw.slice(0, 2).toUpperCase();
+  }, [profile?.displayName, profile?.email]);
 
   const handleNavigate = (tab: ViewTab, subTab?: string) => {
     setActiveTab(tab);
@@ -149,10 +218,11 @@ export default function App() {
   const subStatus = getSubscriptionStatus(profile);
   const pushNotifications = usePushNotifications(profile);
   const isFormalActive = Boolean(
-    authUid &&
-      profile?.accessStatus === 'active' &&
-      !subStatus.isExpired &&
-      !showLandingExplicit &&
+    ((import.meta.env.DEV && designSystemMode) ||
+      (authUid &&
+        profile?.accessStatus === 'active' &&
+        !subStatus.isExpired &&
+        !showLandingExplicit)) &&
       colorTone === 'formal'
   );
 
@@ -168,7 +238,7 @@ export default function App() {
           ? '#0D121B'
           : '#F4F6F9'
         : theme === 'dark'
-          ? '#161320'
+          ? '#14111F'
           : '#FFF7F3';
       themeMeta.setAttribute('content', metaColor);
     }
@@ -190,10 +260,11 @@ export default function App() {
     };
   }, []);
 
-  // Listener de Firebase Auth
+  // Listener de Firebase Auth (soporta Google Sign-In y Correo/Contraseña con verificación)
   useEffect(() => {
     const unsubAuth = onAuthStateChanged(auth, async (fbUser) => {
       if (!fbUser) {
+        setUnverifiedUser(null);
         setAuthUid(null);
         setProfile(null);
         setBusinesses([]);
@@ -202,7 +273,20 @@ export default function App() {
         return;
       }
 
+      if (!fbUser.emailVerified) {
+        setUnverifiedUser(fbUser);
+        setAuthUid(null);
+        setProfile(null);
+        setBusinesses([]);
+        setBusinessesLoaded(false);
+        setAuthReady(true);
+        return;
+      }
+
+      setUnverifiedUser(null);
       setAuthUid(fbUser.uid);
+      setAuthModalOpen(false);
+      void trackFunnelStepOncePerSession('login', { source: 'app' });
       try {
         await ensureUserProfile({
           uid: fbUser.uid,
@@ -288,6 +372,23 @@ export default function App() {
     });
   }, [authUid, profile?.uid, profile?.email, profile?.displayName, profile?.planType, profile?.billingDay, profile?.nextPaymentDueAt, checkedMpPaymentId]);
 
+  // 3.7 Verificación al volver de Mercado Pago Suscripción Automática (?preapproval_id=...)
+  useEffect(() => {
+    if (!authUid || !profile) return;
+    const params = new URLSearchParams(window.location.search);
+    const preapprovalId = params.get('preapproval_id');
+    if (!preapprovalId || checkedMpPreapprovalId === preapprovalId) return;
+
+    setCheckedMpPreapprovalId(preapprovalId);
+    verifyMercadoPagoSubscription({
+      preapprovalId,
+      profile,
+    }).then((res) => {
+      setMpVerificationNotice(res.message);
+      window.history.replaceState({}, document.title, window.location.pathname + window.location.hash);
+    });
+  }, [authUid, profile?.uid, checkedMpPreapprovalId]);
+
   // Suscripción a los negocios del usuario cuando el acceso está activo y vigente
   useEffect(() => {
     const expiredNow = getSubscriptionStatus(profile).isExpired;
@@ -314,6 +415,83 @@ export default function App() {
       setBusinessesLoaded(true);
     });
   }, [authUid, profile?.accessStatus, profile?.nextPaymentDueAt, profile?.role]);
+
+  // Conservar borrador ingresado en la calculadora pública de la landing tras iniciar sesión
+  useEffect(() => {
+    const expiredNow = getSubscriptionStatus(profile).isExpired;
+    if (
+      !authUid ||
+      !profile ||
+      profile.accessStatus !== 'active' ||
+      expiredNow ||
+      !businessesLoaded ||
+      showLandingExplicit ||
+      handledDraftRef.current
+    ) {
+      return;
+    }
+
+    const draft = readPublicBreakEvenDraft();
+    if (!draft) return;
+
+    handledDraftRef.current = true;
+    const baseProductId = `prod-calc-${Date.now()}`;
+    const unitContrib = draft.unitPrice - draft.variableCost;
+    const suggestedUnits =
+      unitContrib > 0 && draft.fixedCosts > 0
+        ? Math.max(10, Math.ceil((draft.fixedCosts / unitContrib) * 1.25))
+        : 40;
+
+    const draftedBiz: BusinessWorkspace = {
+      ...createEmptyBusiness('Mi cálculo inicial (Calculadora)'),
+      id: `biz-draft-${Date.now()}`,
+      ownerUid: profile.uid,
+      tagline: 'Creado desde la calculadora pública de Equilibrio',
+      fixedCosts:
+        draft.fixedCosts > 0
+          ? [
+              {
+                id: `fc-calc-${Date.now()}`,
+                name: 'Costos fijos estimados',
+                amount: draft.fixedCosts,
+                category: 'otros',
+                notes: 'Importado desde calculadora de la portada',
+              },
+            ]
+          : [],
+      products: [
+        {
+          id: baseProductId,
+          name: 'Producto o servicio principal',
+          category: 'General',
+          price: draft.unitPrice,
+          variableCost: draft.variableCost,
+        },
+      ],
+      expectedMonthlyUnits: suggestedUnits,
+      baseMonthlyUnitsByProduct: {
+        [baseProductId]: suggestedUnits,
+      },
+      updatedAt: new Date().toISOString(),
+    };
+
+    clearPublicBreakEvenDraft();
+    setBusinesses((prev) => [...prev, draftedBiz]);
+    setActiveBusinessId(draftedBiz.id);
+    setActiveTab('calculator');
+    setDraftCarryNotice(
+      'Cargamos los valores que probaste en la portada dentro de "Mi cálculo inicial (Calculadora)" para que puedas ajustarlos y proyectar tu mes.'
+    );
+    void trackFunnelStepOncePerSession('first_calculation', { source: 'app' });
+    void saveUserBusiness(profile.uid, draftedBiz, true).catch(() => {});
+  }, [
+    authUid,
+    profile?.uid,
+    profile?.accessStatus,
+    profile?.nextPaymentDueAt,
+    businessesLoaded,
+    showLandingExplicit,
+  ]);
 
   // Activar tour guiado automáticamente solo para usuarios nuevos (onboardingCompleted === false)
   useEffect(() => {
@@ -365,8 +543,27 @@ export default function App() {
     });
   }, [authUid, profile?.role, profile?.accessStatus]);
 
+  // Registrar paso de primer cálculo cuando el usuario entra a la calculadora de Equilibrio
+  useEffect(() => {
+    if (activeTab === 'calculator' && (authUid || guestDemoMode) && !showLandingExplicit) {
+      void trackFunnelStepOncePerSession('first_calculation', {
+        source: guestDemoMode && !authUid ? 'demo' : 'app',
+      });
+    }
+  }, [activeTab, authUid, guestDemoMode, showLandingExplicit]);
+
+  const handleOpenAuthModal = () => {
+    if (authUid) {
+      setShowLandingExplicit(false);
+      return;
+    }
+    setAuthError(null);
+    setAuthModalOpen(true);
+  };
+
   const handleGoogleSignIn = async () => {
     if (authUid) {
+      setAuthModalOpen(false);
       setShowLandingExplicit(false);
       return;
     }
@@ -374,6 +571,7 @@ export default function App() {
     setAuthError(null);
     try {
       await signInWithPopup(auth, googleProvider);
+      setAuthModalOpen(false);
       setShowLandingExplicit(false);
     } catch (err: unknown) {
       const code =
@@ -396,8 +594,138 @@ export default function App() {
     }
   };
 
+  const handleEmailAuth = async (
+    payload: EmailAuthSubmitPayload
+  ): Promise<{ ok: boolean; message?: string }> => {
+    setAuthError(null);
+    try {
+      if (payload.mode === 'reset') {
+        await sendPasswordResetEmail(auth, payload.email);
+        return {
+          ok: true,
+          message:
+            'Te enviamos un enlace a tu correo para restablecer tu contraseña (revisa también spam).',
+        };
+      }
+
+      if (payload.mode === 'signup') {
+        const cred = await createUserWithEmailAndPassword(auth, payload.email, payload.password);
+        if (payload.displayName) {
+          await updateProfile(cred.user, { displayName: payload.displayName });
+        }
+        await sendEmailVerification(cred.user);
+        setAuthModalOpen(false);
+        setShowLandingExplicit(false);
+        void trackFunnelStepOncePerSession('login', { source: 'app' });
+        return { ok: true };
+      }
+
+      await signInWithEmailAndPassword(auth, payload.email, payload.password);
+      setAuthModalOpen(false);
+      setShowLandingExplicit(false);
+      void trackFunnelStepOncePerSession('login', { source: 'app' });
+      return { ok: true };
+    } catch (err: unknown) {
+      const code =
+        typeof err === 'object' && err !== null && 'code' in err
+          ? String((err as { code?: unknown }).code)
+          : '';
+      if (code === 'auth/email-already-in-use') {
+        return {
+          ok: false,
+          message:
+            'Ese correo ya tiene cuenta. Elige "Ya tengo cuenta" o recupera tu contraseña.',
+        };
+      }
+      if (
+        code === 'auth/invalid-credential' ||
+        code === 'auth/wrong-password' ||
+        code === 'auth/user-not-found'
+      ) {
+        return { ok: false, message: 'Correo o contraseña incorrectos. Revisa e intenta otra vez.' };
+      }
+      if (code === 'auth/weak-password') {
+        return { ok: false, message: 'La contraseña debe tener al menos 6 caracteres.' };
+      }
+      if (code === 'auth/invalid-email') {
+        return { ok: false, message: 'El formato del correo no es válido.' };
+      }
+      if (code === 'auth/too-many-requests') {
+        return {
+          ok: false,
+          message: 'Demasiados intentos seguidos. Espera un par de minutos e intenta nuevamente.',
+        };
+      }
+      if (code === 'auth/operation-not-allowed') {
+        return {
+          ok: false,
+          message:
+            'El acceso con correo aún no está habilitado en Firebase Authentication. Usa "Entrar con Google" o actívalo en la consola.',
+        };
+      }
+      return {
+        ok: false,
+        message: 'No pudimos completar el acceso con tu correo. Intenta nuevamente en unos segundos.',
+      };
+    }
+  };
+
+  const handleCheckEmailVerified = async (): Promise<{
+    verified: boolean;
+    message: string;
+  }> => {
+    const current = auth.currentUser;
+    if (!current) {
+      return { verified: false, message: 'Tu sesión expiró. Vuelve a iniciar sesión.' };
+    }
+    try {
+      await current.reload();
+      await current.getIdToken(true);
+      if (current.emailVerified) {
+        setUnverifiedUser(null);
+        setAuthUid(current.uid);
+        await ensureUserProfile({
+          uid: current.uid,
+          email: current.email ?? '',
+          displayName: current.displayName ?? 'Emprendedor',
+        });
+        return { verified: true, message: '¡Correo confirmado! Entrando a tu espacio...' };
+      }
+      return {
+        verified: false,
+        message:
+          'Aún no vemos la confirmación. Abre el enlace que enviamos a tu bandeja (revisa spam) y vuelve a presionar el botón.',
+      };
+    } catch {
+      return {
+        verified: false,
+        message: 'No pudimos verificar el estado ahora. Intenta nuevamente en unos segundos.',
+      };
+    }
+  };
+
+  const handleResendVerificationEmail = async (): Promise<{
+    sent: boolean;
+    message: string;
+  }> => {
+    const current = auth.currentUser;
+    if (!current) {
+      return { sent: false, message: 'Vuelve a iniciar sesión para reenviar el enlace.' };
+    }
+    try {
+      await sendEmailVerification(current);
+      return { sent: true, message: 'Te reenviamos el enlace de verificación a tu correo.' };
+    } catch {
+      return {
+        sent: false,
+        message: 'Espera unos segundos antes de volver a solicitar otro correo.',
+      };
+    }
+  };
+
   const handleSignOut = async () => {
     await signOut(auth);
+    setUnverifiedUser(null);
     setActiveTab('dashboard');
     setShowLandingExplicit(false);
   };
@@ -406,29 +734,68 @@ export default function App() {
     setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
   };
 
-  // Estado inicial de carga Auth
-  if (!authReady) {
+  const handleStartGuestDemo = () => {
+    setGuestDemoBusiness(createPublicBakeryCafeDemoBusiness());
+    setGuestDemoMode(true);
+    setShowLandingExplicit(false);
+    setActiveTab('dashboard');
+    setDashboardSubTab('overview');
+  };
+
+  // Vista de prueba interna (solo en entorno DEV con ?design-system=1)
+  if (import.meta.env.DEV && designSystemMode && LazyDesignSystemShowcase) {
     return (
       <GrowyMotionRoot>
-        <div className="min-h-screen flex items-center justify-center p-6">
+        <Suspense fallback={null}>
+          <LazyDesignSystemShowcase
+            theme={theme}
+            colorTone={colorTone}
+            onChangeTheme={setTheme}
+            onChangeTone={setColorTone}
+            onExit={() => {
+              setDesignSystemMode(false);
+              try {
+                const url = new URL(window.location.href);
+                url.searchParams.delete('design-system');
+                window.history.replaceState({}, document.title, url.pathname + url.search + url.hash);
+              } catch {
+                // Ignorar
+              }
+            }}
+          />
+        </Suspense>
+      </GrowyMotionRoot>
+    );
+  }
+
+  // Estado inicial de carga Auth (si está en demo pública sin authUid, permitimos entrar directo)
+  if (!authReady && !guestDemoMode) {
+    return (
+      <GrowyMotionRoot>
+        <div className="relative min-h-screen flex items-center justify-center p-6 overflow-hidden">
+          <BackdropBlobs />
           <motion.div
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.35, ease: GROWY_EASE }}
-            className="text-center space-y-3"
+            className="relative z-10 w-full max-w-sm"
           >
-            <GrowyLogoMark size="lg" showSlogan className="mx-auto items-center" />
-            <p className="text-sm text-[#6E6D7A] dark:text-[#B0AAB8]">
-              Preparando tu espacio financiero...
-            </p>
+            <GlassCard className="p-6 sm:p-8 text-center space-y-3">
+              <GrowyLogoMark size="lg" showSlogan className="mx-auto items-center" />
+              <p className="text-sm text-[var(--text-secondary)]">
+                Preparando tu espacio financiero...
+              </p>
+            </GlassCard>
           </motion.div>
         </div>
       </GrowyMotionRoot>
     );
   }
 
-  // 1. Landing pública de venta (sin login o si eligió volver a ver la landing)
-  if (!authUid || showLandingExplicit) {
+  const isGuestDemoActive = !authUid && !unverifiedUser && guestDemoMode && !showLandingExplicit;
+
+  // 1. Landing pública de venta (sin login y sin modo demo activo, o si eligió volver a ver la landing)
+  if ((!authUid && !unverifiedUser && !isGuestDemoActive) || showLandingExplicit) {
     return (
       <GrowyMotionRoot>
         <LandingPage
@@ -437,29 +804,54 @@ export default function App() {
           isDark={theme === 'dark'}
           isSignedIn={Boolean(authUid)}
           onToggleTheme={handleToggleTheme}
-          onLoginClick={handleGoogleSignIn}
+          onLoginClick={handleOpenAuthModal}
+          onTryDemo={handleStartGuestDemo}
           authLoading={authLoading}
           authError={authError}
+        />
+        <AuthModal
+          open={authModalOpen}
+          onClose={() => setAuthModalOpen(false)}
+          onGoogleSignIn={handleGoogleSignIn}
+          onEmailAuth={handleEmailAuth}
+          authLoading={authLoading}
+          externalError={authError}
         />
         <OfflineIndicator />
       </GrowyMotionRoot>
     );
   }
 
-  // Cargando perfil
-  if (!profile) {
+  // 1B. Verificación obligatoria de correo (para cuentas creadas con correo y contraseña)
+  if (!isGuestDemoActive && !authUid && unverifiedUser) {
     return (
-      <div className="min-h-screen flex items-center justify-center p-6">
-        <div className="text-center space-y-3">
+      <GrowyMotionRoot>
+        <EmailVerificationWall
+          email={unverifiedUser.email ?? ''}
+          onCheckVerified={handleCheckEmailVerified}
+          onResendEmail={handleResendVerificationEmail}
+          onSignOut={handleSignOut}
+        />
+        <OfflineIndicator />
+      </GrowyMotionRoot>
+    );
+  }
+
+  // Cargando perfil (solo cuando hay sesión Firebase)
+  if (!isGuestDemoActive && !profile) {
+    return (
+      <div className="relative min-h-screen flex items-center justify-center p-6 overflow-hidden">
+        <BackdropBlobs />
+        <GlassCard className="relative z-10 w-full max-w-sm p-6 sm:p-8 text-center space-y-3">
           <GrowyLogoMark size="lg" showSlogan className="mx-auto items-center" />
-          <p className="text-sm text-[#6E6D7A] dark:text-[#B0AAB8]">Verificando tu acceso...</p>
-        </div>
+          <p className="text-sm text-[var(--text-secondary)]">Verificando tu acceso...</p>
+        </GlassCard>
       </div>
     );
   }
 
-  // 2. Pantalla de acceso pendiente, vencido o suspendido
-  if (profile.accessStatus !== 'active' || subStatus.isExpired) {
+  // 2. Pantalla de acceso pendiente, vencido o suspendido (solo para usuarios autenticados)
+  if (!isGuestDemoActive && profile && (profile.accessStatus !== 'active' || subStatus.isExpired)) {
     return (
       <GrowyMotionRoot>
         <PendingAccessView
@@ -475,7 +867,7 @@ export default function App() {
   }
 
   // 3. Elección obligatoria de día de pago mensual (5, 15 o 30) al iniciar sesión por primera vez
-  if (!subStatus.isExemptAdmin && !subStatus.hasBillingDay) {
+  if (!isGuestDemoActive && profile && !subStatus.isExemptAdmin && !subStatus.hasBillingDay) {
     const previewDue = billingDayPick ? computeInitialNextDueDate(billingDayPick) : null;
     const handleConfirmBillingDay = async () => {
       if (!billingDayPick) {
@@ -495,126 +887,132 @@ export default function App() {
 
     return (
       <GrowyMotionRoot>
-        <div className="min-h-screen flex items-center justify-center p-4 sm:p-6">
+        <div className="relative min-h-screen flex items-center justify-center p-4 sm:p-6 overflow-hidden">
+          <BackdropBlobs />
           <motion.div
             initial={{ opacity: 0, y: 14 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.36, ease: GROWY_EASE }}
-            className="w-full max-w-xl boho-card p-6 sm:p-8 space-y-5"
+            className="relative z-10 w-full max-w-xl"
           >
-            <div className="growy-hero-surface rounded-[24px] p-5 flex items-start justify-between gap-3">
-              <div className="space-y-2">
-                <div className="flex items-center gap-2.5">
-                  <GrowyLogoMark size="sm" />
-                  <span className="text-[var(--sec-border)]" aria-hidden="true">·</span>
-                  <EquilibrioProductIcon size="xs" />
-                  <span className="font-display text-xs font-bold text-[var(--text-primary)]">
-                    Equilibrio
+            <SolidCard className="p-6 sm:p-8 space-y-5">
+              <div className="relative overflow-hidden growy-banner-surface rounded-[28px] p-5 flex items-start justify-between gap-3">
+                <div className="growy-banner-grain" aria-hidden="true" />
+                <div className="relative z-10 space-y-2">
+                  <div className="flex items-center gap-2.5">
+                    <GrowyLogoMark size="sm" />
+                    <span className="text-[var(--banner-ink)]/40" aria-hidden="true">·</span>
+                    <EquilibrioProductIcon size="xs" />
+                    <span className="font-display text-xs font-extrabold text-[var(--banner-ink)]">
+                      Equilibrio
+                    </span>
+                  </div>
+                  <h1 className="font-display text-2xl sm:text-[1.75rem] font-extrabold text-[var(--banner-ink)] tracking-tight leading-tight">
+                    <EditorialText text="Elige tu *fecha de pago* mensual" />
+                  </h1>
+                  <p className="text-xs text-[var(--banner-ink-muted)]">
+                    Cuenta: <strong>{profile.email}</strong> · Plan {MONTHLY_PRICE_LABEL} (Precio por lanzamiento)
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleSignOut}
+                  className="relative z-10 min-h-[40px] px-4 rounded-full border border-[var(--banner-ink)]/25 bg-[var(--bg-surface)]/80 text-[var(--text-primary)] text-xs font-semibold inline-flex items-center gap-1.5 hover:bg-[var(--bg-surface)] cursor-pointer shrink-0"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                  <span>Salir</span>
+                </button>
+              </div>
+
+              <p className="text-sm text-[var(--text-secondary)] leading-relaxed">
+                ¿Qué día de cada mes prefieres pagar tu suscripción de <strong>$5.990</strong>? Te
+                recordaremos antes de esa fecha; al llegar tu día de vencimiento sin pago, la página
+                dejará de funcionar hasta que pagues con el link de Mercado Pago.
+              </p>
+
+              <div className="grid grid-cols-3 gap-3">
+                {BILLING_DAY_OPTIONS.map((day) => {
+                  const selected = billingDayPick === day;
+                  return (
+                    <button
+                      key={day}
+                      type="button"
+                      onClick={() => {
+                        setBillingDayPick(day);
+                        setBillingDayError(null);
+                      }}
+                      style={
+                        selected
+                          ? { backgroundColor: 'var(--btn-navy-bg)', color: 'var(--btn-navy-text)' }
+                          : undefined
+                      }
+                      className={`min-h-[68px] p-3 rounded-[24px] border text-center transition-colors cursor-pointer ${
+                        selected
+                          ? 'border-transparent shadow-xs'
+                          : 'bg-[var(--bg-soft-alt)] text-[var(--text-primary)] border-[var(--border-hairline)] hover:bg-[var(--bg-soft)]'
+                      }`}
+                    >
+                      <span className="block font-mono text-lg font-bold">Día {day}</span>
+                      <span className="block text-[11px] opacity-80">de cada mes</span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {previewDue && (
+                <div className="p-3.5 rounded-[22px] bg-[var(--sec-soft)] border border-[var(--sec-border)] text-xs text-[var(--sec-text)] flex items-center gap-2.5">
+                  <CalendarCheck className="w-4 h-4 shrink-0" />
+                  <span>
+                    Tu primer vencimiento quedará fijado para el{' '}
+                    <strong>{formatISODateSpanish(previewDue)}</strong>.
                   </span>
                 </div>
-                <h1 className="font-display text-2xl sm:text-[1.75rem] font-bold text-[var(--text-primary)] tracking-tight leading-tight">
-                  Elige tu{' '}
-                  <em className="font-editorial italic font-semibold text-[var(--accent-strong)]">
-                    fecha de pago
-                  </em>{' '}
-                  mensual
-                </h1>
-                <p className="text-xs text-[var(--text-secondary)]">
-                  Cuenta: <strong>{profile.email}</strong> · Plan {MONTHLY_PRICE_LABEL} (Precio por lanzamiento)
+              )}
+
+              {billingDayError && (
+                <p className="text-xs font-semibold p-3 rounded-[22px] bg-[var(--danger-soft)] text-[var(--danger-text)]">
+                  {billingDayError}
                 </p>
-              </div>
+              )}
+
               <button
                 type="button"
-                onClick={handleSignOut}
-                className="min-h-[40px] px-4 rounded-full border border-[var(--sec-border)] bg-[var(--bg-surface)] text-xs font-semibold inline-flex items-center gap-1.5 hover:bg-[var(--bg-soft)] cursor-pointer shrink-0"
+                disabled={!billingDayPick || savingBillingDay}
+                onClick={handleConfirmBillingDay}
+                style={{ backgroundColor: 'var(--btn-navy-bg)', color: 'var(--btn-navy-text)' }}
+                className="w-full min-h-[48px] rounded-full text-sm font-bold inline-flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 shadow-xs hover:opacity-92 transition-opacity"
               >
-                <LogOut className="w-3.5 h-3.5" />
-                <span>Salir</span>
+                <Check className="w-4 h-4" />
+                <span>{savingBillingDay ? 'Guardando...' : 'Guardar fecha y entrar a Equilibrio'}</span>
               </button>
-            </div>
 
-            <p className="text-sm text-[var(--text-secondary)] leading-relaxed">
-              ¿Qué día de cada mes prefieres pagar tu suscripción de <strong>$5.990</strong>? Te
-              recordaremos antes de esa fecha; al llegar tu día de vencimiento sin pago, la página
-              dejará de funcionar hasta que pagues con el link de Mercado Pago.
-            </p>
+              <button
+                type="button"
+                disabled={savingBillingDay}
+                onClick={async () => {
+                  setSavingBillingDay(true);
+                  setBillingDayError(null);
+                  try {
+                    await setUserPlanPreference({ profile, planType: 'annual' });
+                  } catch {
+                    setBillingDayError('No se pudo cambiar a Oferta Anual. Intenta nuevamente.');
+                  } finally {
+                    setSavingBillingDay(false);
+                  }
+                }}
+                className="w-full min-h-[44px] px-5 rounded-full border border-[var(--pos-border)] bg-[var(--pos-soft)] text-xs font-bold text-[var(--pos-text)] cursor-pointer hover:opacity-90 transition-opacity"
+              >
+                ¿Pagaste la Oferta Anual ({ANNUAL_PRICE_LABEL} · {ANNUAL_DISCOUNT_LABEL} dcto)? Omitir cobro mensual
+              </button>
 
-            <div className="grid grid-cols-3 gap-3">
-              {BILLING_DAY_OPTIONS.map((day) => {
-                const selected = billingDayPick === day;
-                return (
-                  <button
-                    key={day}
-                    type="button"
-                    onClick={() => {
-                      setBillingDayPick(day);
-                      setBillingDayError(null);
-                    }}
-                    className={`min-h-[68px] p-3 rounded-[22px] border text-center transition-colors cursor-pointer ${
-                      selected
-                        ? 'bg-[var(--accent-btn)] text-[var(--accent-btn-text)] border-transparent shadow-xs'
-                        : 'bg-[var(--bg-soft-alt)] text-[var(--text-primary)] border-[var(--border-hairline)] hover:bg-[var(--bg-soft)]'
-                    }`}
-                  >
-                    <span className="block font-mono text-lg font-bold">Día {day}</span>
-                    <span className="block text-[11px] opacity-80">de cada mes</span>
-                  </button>
-                );
-              })}
-            </div>
-
-            {previewDue && (
-              <div className="p-3.5 rounded-2xl bg-[var(--sec-soft)] border border-[var(--sec-border)] text-xs text-[var(--sec-text)] flex items-center gap-2.5">
-                <CalendarCheck className="w-4 h-4 shrink-0" />
-                <span>
-                  Tu primer vencimiento quedará fijado para el{' '}
-                  <strong>{formatISODateSpanish(previewDue)}</strong>.
-                </span>
+              <div className="pt-4 border-t border-[var(--border-hairline)]">
+                <ProblemReportPanel
+                  profile={profile}
+                  contactEmail={appConfig.contactEmail}
+                  compact
+                />
               </div>
-            )}
-
-            {billingDayError && (
-              <p className="text-xs font-semibold p-3 rounded-2xl bg-[var(--danger-soft)] text-[var(--danger-text)]">
-                {billingDayError}
-              </p>
-            )}
-
-            <button
-              type="button"
-              disabled={!billingDayPick || savingBillingDay}
-              onClick={handleConfirmBillingDay}
-              className="w-full min-h-[48px] rounded-full bg-[var(--accent-btn)] hover:bg-[var(--accent-btn-hover)] text-[var(--accent-btn-text)] text-sm font-bold inline-flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 shadow-xs"
-            >
-              <Check className="w-4 h-4" />
-              <span>{savingBillingDay ? 'Guardando...' : 'Guardar fecha y entrar a Equilibrio'}</span>
-            </button>
-
-            <button
-              type="button"
-              disabled={savingBillingDay}
-              onClick={async () => {
-                setSavingBillingDay(true);
-                setBillingDayError(null);
-                try {
-                  await setUserPlanPreference({ profile, planType: 'annual' });
-                } catch {
-                  setBillingDayError('No se pudo cambiar a Oferta Anual. Intenta nuevamente.');
-                } finally {
-                  setSavingBillingDay(false);
-                }
-              }}
-              className="w-full min-h-[44px] px-5 rounded-full border border-[var(--pos-border)] bg-[var(--pos-soft)] text-xs font-bold text-[var(--pos-text)] cursor-pointer hover:opacity-90 transition-opacity"
-            >
-              ¿Pagaste la Oferta Anual ({ANNUAL_PRICE_LABEL} · {ANNUAL_DISCOUNT_LABEL} dcto)? Omitir cobro mensual
-            </button>
-
-            <div className="pt-4 border-t border-[var(--border-hairline)]">
-              <ProblemReportPanel
-                profile={profile}
-                contactEmail={appConfig.contactEmail}
-                compact
-              />
-            </div>
+            </SolidCard>
           </motion.div>
         </div>
         <OfflineIndicator />
@@ -622,28 +1020,31 @@ export default function App() {
     );
   }
 
-  // Cargando espacios de trabajo
-  if (!businessesLoaded || businesses.length === 0) {
+  // Cargando espacios de trabajo (solo para sesiones autenticadas)
+  if (!isGuestDemoActive && (!businessesLoaded || businesses.length === 0)) {
     return (
-      <div className="min-h-screen flex items-center justify-center p-6">
-        <div className="text-center space-y-3">
+      <div className="relative min-h-screen flex items-center justify-center p-6 overflow-hidden">
+        <BackdropBlobs />
+        <GlassCard className="relative z-10 w-full max-w-sm p-6 sm:p-8 text-center space-y-3">
           <GrowyLogoMark size="lg" showSlogan className="mx-auto items-center" />
-          <p className="text-sm text-[#6E6D7A] dark:text-[#B0AAB8]">
+          <p className="text-sm text-[var(--text-secondary)]">
             Sincronizando tus negocios...
           </p>
-        </div>
+        </GlassCard>
       </div>
     );
   }
 
-  const activeBusiness =
-    businesses.find((b) => b.id === activeBusinessId) ?? businesses[0];
+  const effectiveBusinesses = isGuestDemoActive ? [guestDemoBusiness] : businesses;
+  const activeBusiness = isGuestDemoActive
+    ? guestDemoBusiness
+    : businesses.find((b) => b.id === activeBusinessId) ?? businesses[0];
   const isDark = theme === 'dark';
 
   const appStateSnapshot: AppStorageState = {
     version: 2,
     activeBusinessId: activeBusiness.id,
-    businesses,
+    businesses: effectiveBusinesses,
     theme,
     colorTone,
   };
@@ -654,11 +1055,17 @@ export default function App() {
       ...patch,
       updatedAt: new Date().toISOString(),
     };
+    if (isGuestDemoActive) {
+      setGuestDemoBusiness(updated);
+      return;
+    }
+    if (!profile) return;
     setBusinesses((prev) => prev.map((b) => (b.id === updated.id ? updated : b)));
     saveUserBusiness(profile.uid, updated, false);
   };
 
   const handleCreateBusiness = async (name: string) => {
+    if (isGuestDemoActive || !profile) return;
     const fresh = { ...createEmptyBusiness(name), ownerUid: profile.uid };
     setBusinesses((prev) => [...prev, fresh]);
     setActiveBusinessId(fresh.id);
@@ -666,6 +1073,7 @@ export default function App() {
   };
 
   const handleDuplicateBusiness = async () => {
+    if (isGuestDemoActive || !profile) return;
     const copy: BusinessWorkspace = {
       ...JSON.parse(JSON.stringify(activeBusiness)),
       id: `biz-${Date.now()}`,
@@ -680,7 +1088,7 @@ export default function App() {
   };
 
   const handleDeleteBusiness = async (id: string) => {
-    if (businesses.length <= 1) return;
+    if (isGuestDemoActive || !profile || businesses.length <= 1) return;
     const remaining = businesses.filter((b) => b.id !== id);
     setBusinesses(remaining);
     if (activeBusinessId === id) {
@@ -690,6 +1098,12 @@ export default function App() {
   };
 
   const handleClearDemoData = async () => {
+    if (isGuestDemoActive) {
+      setGuestDemoBusiness(createEmptyBusiness('Negocio de prueba'));
+      setActiveTab('catalog');
+      return;
+    }
+    if (!profile) return;
     const blank = { ...createEmptyBusiness('Mi Negocio'), ownerUid: profile.uid };
     for (const old of businesses) {
       await deleteUserBusiness(profile.uid, old.id);
@@ -701,6 +1115,12 @@ export default function App() {
   };
 
   const handleRestoreDemoData = async () => {
+    if (isGuestDemoActive) {
+      setGuestDemoBusiness(createPublicBakeryCafeDemoBusiness());
+      setActiveTab('dashboard');
+      return;
+    }
+    if (!profile) return;
     const demos = await seedDemoBusinessesForUser(profile.uid);
     setBusinesses(demos);
     setActiveBusinessId(demos[0].id);
@@ -708,644 +1128,732 @@ export default function App() {
   };
 
   const handleImportState = async (imported: AppStorageState) => {
+    if (isGuestDemoActive || !profile) return;
     for (const biz of imported.businesses) {
       await saveUserBusiness(profile.uid, { ...biz, ownerUid: profile.uid }, false);
     }
     setActiveBusinessId(imported.activeBusinessId);
   };
 
-  const NAV_ITEMS: Array<{
-    id: ViewTab;
-    label: string;
-    shortLabel: string;
-    icon: React.ReactNode;
-  }> = [
+  const floatingNavItems: FloatingNavItem[] = [
     {
       id: 'dashboard',
       label: 'Resumen',
       shortLabel: 'Resumen',
-      icon: <LayoutDashboard className="w-5 h-5" />,
+      active: activeTab === 'dashboard',
+      onClick: () => setActiveTab('dashboard'),
+      dataTour: 'nav-dashboard',
+      icon: <LayoutDashboard className="w-4 h-4" />,
     },
     {
       id: 'calculator',
-      label: 'Equilibrio y Meta',
+      label: 'Equilibrio',
       shortLabel: 'Equilibrio',
-      icon: <Compass className="w-5 h-5" />,
+      active: activeTab === 'calculator',
+      onClick: () => setActiveTab('calculator'),
+      dataTour: 'nav-calculator',
+      icon: <Compass className="w-4 h-4" />,
     },
     {
       id: 'projections',
-      label: 'Proyección 12M',
+      label: 'Proyección',
       shortLabel: 'Proyección',
-      icon: <CalendarRange className="w-5 h-5" />,
+      active: activeTab === 'projections',
+      onClick: () => setActiveTab('projections'),
+      dataTour: 'nav-projections',
+      icon: <CalendarRange className="w-4 h-4" />,
     },
     {
       id: 'actuals',
-      label: 'Resultados Reales',
+      label: 'Reales',
       shortLabel: 'Reales',
-      icon: <BookOpen className="w-5 h-5" />,
+      active: activeTab === 'actuals',
+      onClick: () => setActiveTab('actuals'),
+      dataTour: 'nav-actuals',
+      icon: <BookOpen className="w-4 h-4" />,
     },
     {
       id: 'catalog',
-      label: 'Costos y Catálogo',
+      label: 'Catálogo',
       shortLabel: 'Catálogo',
-      icon: <Package className="w-5 h-5" />,
+      active: activeTab === 'catalog',
+      onClick: () => setActiveTab('catalog'),
+      dataTour: 'nav-catalog',
+      icon: <Package className="w-4 h-4" />,
     },
     {
       id: 'simple',
-      label: 'Peras y manzanas',
+      label: 'En simple',
       shortLabel: 'En simple',
-      icon: <Apple className="w-5 h-5" />,
+      active: activeTab === 'simple',
+      onClick: () => setActiveTab('simple'),
+      dataTour: 'nav-simple',
+      icon: <Apple className="w-4 h-4" />,
     },
-    {
-      id: 'faq',
-      label: 'Ayuda y FAQ',
-      shortLabel: 'Ayuda',
-      icon: <HelpCircle className="w-5 h-5" />,
-    },
-    {
-      id: 'settings',
-      label: 'Configuración',
-      shortLabel: 'Config.',
-      icon: <Settings2 className="w-5 h-5" />,
-    },
-    ...(profile.role === 'admin'
-      ? [
-          {
-            id: 'admin' as ViewTab,
-            label: openTicketsCount > 0 ? `Administrador (${openTicketsCount})` : 'Administrador',
-            shortLabel: 'Admin',
-            icon: <Shield className="w-5 h-5" />,
-          },
-        ]
-      : []),
+  ];
+
+  // Móvil (5 ranuras: Resumen, Catálogo, [Equilibrio centro], Proyección, Reales)
+  // Incluye data-tour="nav-actuals" también en móvil para el onboarding tour.
+  const mobileNavItems: FloatingNavItem[] = [
+    floatingNavItems[0],
+    floatingNavItems[4],
+    floatingNavItems[2],
+    floatingNavItems[3],
   ];
 
   return (
     <GrowyMotionRoot>
-      <div className="min-h-screen flex flex-col lg:flex-row">
-        {/* BARRA LATERAL EN ESCRITORIO */}
-        <aside className="hidden lg:flex lg:flex-col lg:w-64 lg:fixed lg:inset-y-0 border-r border-[var(--border-hairline)] bg-[var(--bg-sidebar)] backdrop-blur-sm p-5 justify-between z-30 overflow-y-auto">
-          <div className="space-y-5">
-            <div className="space-y-3">
-              <div className="px-1 flex items-center justify-between gap-2">
-                <GrowyLogoMark size="sm" />
+      <div className="relative min-h-screen flex flex-col overflow-x-clip">
+        <BackdropBlobs />
+
+        {/* BARRA SUPERIOR FLOTANTE EN PÍLDORA (ESCRITORIO) + BARRA INFERIOR FLOTANTE (MÓVIL) */}
+        <FloatingNav
+          maxWidthClass="max-w-7xl"
+          items={floatingNavItems}
+          mobileItems={mobileNavItems}
+          onLogoClick={() => setShowLandingExplicit(true)}
+          centerMobileLabel="Equilibrio"
+          centerMobileActive={activeTab === 'calculator'}
+          onCenterMobileClick={() => setActiveTab('calculator')}
+          isDark={isDark}
+          onToggleTheme={handleToggleTheme}
+          extraRightSlot={
+            <div className="flex items-center gap-1">
+              <PWAInstallButton compact />
+              {!isGuestDemoActive && (
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('faq')}
+                  aria-label="Ayuda y FAQ"
+                  title="Ayuda y preguntas frecuentes"
+                  className={`min-w-[38px] min-h-[38px] rounded-full flex items-center justify-center transition-colors cursor-pointer ${
+                    activeTab === 'faq'
+                      ? 'bg-[var(--bg-soft)] text-[var(--text-primary)]'
+                      : 'text-[var(--text-secondary)] hover:bg-[var(--bg-soft)]'
+                  }`}
+                >
+                  <HelpCircle className="w-4 h-4" />
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setActiveTab('settings')}
+                aria-label="Configuración y apariencia"
+                title="Configuración del negocio y apariencia"
+                className={`min-w-[38px] min-h-[38px] rounded-full flex items-center justify-center transition-colors cursor-pointer ${
+                  activeTab === 'settings'
+                    ? 'bg-[var(--bg-soft)] text-[var(--text-primary)]'
+                    : 'text-[var(--text-secondary)] hover:bg-[var(--bg-soft)]'
+                }`}
+              >
+                <Settings2 className="w-4 h-4" />
+              </button>
+              {!isGuestDemoActive && profile?.role === 'admin' && (
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('admin')}
+                  aria-label="Panel Administrador"
+                  title="Panel Administrador"
+                  className={`relative min-w-[38px] min-h-[38px] rounded-full flex items-center justify-center transition-colors cursor-pointer ${
+                    activeTab === 'admin'
+                      ? 'bg-[var(--bg-soft)] text-[var(--accent-strong)]'
+                      : 'text-[var(--text-secondary)] hover:bg-[var(--bg-soft)]'
+                  }`}
+                >
+                  <Shield className="w-4 h-4" />
+                  {openTicketsCount > 0 && (
+                    <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 rounded-full bg-[var(--accent-strong)] text-white text-[10px] font-bold flex items-center justify-center">
+                      {openTicketsCount}
+                    </span>
+                  )}
+                </button>
+              )}
+            </div>
+          }
+          primaryAction={
+            isGuestDemoActive
+              ? {
+                  label: 'Entrar',
+                  onClick: handleOpenAuthModal,
+                }
+              : {
+                  label: profile?.displayName?.split(/\s+/)[0] || 'Mi cuenta',
+                  avatarInitials: userInitials,
+                  onClick: () => setActiveTab('settings'),
+                }
+          }
+        />
+
+        {/* CONTENIDO PRINCIPAL */}
+        <main className="relative z-10 flex-1 pb-28 md:pb-12">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-4 sm:pt-5 pb-6">
+            {/* Barra contextual compacta: negocio activo, plan y accesos rápidos móviles */}
+            <div className="growy-nav-pill rounded-[26px] lg:rounded-full px-4 py-2.5 mb-5 flex flex-wrap items-center justify-between gap-2.5">
+              <div className="flex flex-wrap items-center gap-2.5 min-w-0">
+                <div className="inline-flex items-center gap-2 pr-1">
+                  <EquilibrioProductIcon size="xs" />
+                  <span className="font-display text-xs font-extrabold text-[var(--text-primary)] tracking-tight">
+                    Equilibrio
+                  </span>
+                  <span className="text-[11px] font-mono text-[var(--text-muted)] hidden sm:inline">
+                    01
+                  </span>
+                </div>
+                <label htmlFor="desktop-business-select" className="sr-only">
+                  Negocio o escenario activo
+                </label>
+                <select
+                  id="desktop-business-select"
+                  value={activeBusiness.id}
+                  onChange={(e) => setActiveBusinessId(e.target.value)}
+                  className="boho-input !py-1.5 !px-3.5 !min-h-[36px] !rounded-full text-xs font-semibold max-w-[230px] sm:max-w-[270px]"
+                >
+                  {effectiveBusinesses.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-1.5">
+                {!subStatus.isExemptAdmin &&
+                  (subStatus.isAnnual || subStatus.billingDay || subStatus.isComplimentary) && (
+                    <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-[var(--border-hairline)] bg-[var(--bg-surface)] text-[11px]">
+                      <span className="font-semibold text-[var(--text-primary)]">
+                        {subStatus.isComplimentary
+                          ? 'Prueba'
+                          : subStatus.isAnnual
+                            ? 'Plan Anual'
+                            : 'Plan $5.990/mes'}
+                      </span>
+                      {!subStatus.isComplimentary && (
+                        <a
+                          href={
+                            subStatus.isAnnual
+                              ? appConfig.annualPaymentUrl || appConfig.paymentUrl
+                              : appConfig.paymentUrl
+                          }
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={() =>
+                            void trackFunnelStepOncePerSession('payment', {
+                              source: 'app',
+                              planType: subStatus.isAnnual ? 'annual' : 'monthly',
+                            })
+                          }
+                          className="font-bold text-[var(--accent-strong)] hover:underline inline-flex items-center gap-0.5"
+                        >
+                          <span>{subStatus.isAnnual ? 'Renovar' : 'Pagar'}</span>
+                          <ArrowRight className="w-3 h-3" />
+                        </a>
+                      )}
+                    </div>
+                  )}
+
+                {/* Cambio rápido Pastel / Ejecutivo */}
+                <button
+                  type="button"
+                  onClick={() =>
+                    setColorTone((prev) => (prev === 'pastel' ? 'formal' : 'pastel'))
+                  }
+                  className="min-h-[34px] px-3 rounded-full border border-[var(--border-hairline)] bg-[var(--bg-surface)] text-[11px] font-semibold text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer transition-colors"
+                  title="Alternar estilo Pastel / Ejecutivo"
+                >
+                  {colorTone === 'formal' ? 'Estilo: Ejecutivo' : 'Estilo: Pastel'}
+                </button>
+
+                {/* Accesos visibles en móvil para pestañas secundarias + tema */}
+                <div className="flex md:hidden items-center gap-1">
+                  <PWAInstallButton compact />
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('simple')}
+                    aria-label="Explícame en simple"
+                    className={`min-w-[34px] min-h-[34px] rounded-full flex items-center justify-center cursor-pointer ${
+                      activeTab === 'simple'
+                        ? 'bg-[var(--bg-soft)] text-[var(--accent-strong)]'
+                        : 'text-[var(--text-secondary)]'
+                    }`}
+                  >
+                    <Apple className="w-4 h-4" />
+                  </button>
+                  {!isGuestDemoActive && (
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('faq')}
+                      aria-label="Ayuda y FAQ"
+                      className={`min-w-[34px] min-h-[34px] rounded-full flex items-center justify-center cursor-pointer ${
+                        activeTab === 'faq'
+                          ? 'bg-[var(--bg-soft)] text-[var(--accent-strong)]'
+                          : 'text-[var(--text-secondary)]'
+                      }`}
+                    >
+                      <HelpCircle className="w-4 h-4" />
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('settings')}
+                    aria-label="Configuración"
+                    className={`min-w-[34px] min-h-[34px] rounded-full flex items-center justify-center cursor-pointer ${
+                      activeTab === 'settings'
+                        ? 'bg-[var(--bg-soft)] text-[var(--accent-strong)]'
+                        : 'text-[var(--text-secondary)]'
+                    }`}
+                  >
+                    <Settings2 className="w-4 h-4" />
+                  </button>
+                  {!isGuestDemoActive && profile?.role === 'admin' && (
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('admin')}
+                      aria-label="Administrador"
+                      className={`min-w-[34px] min-h-[34px] rounded-full flex items-center justify-center cursor-pointer ${
+                        activeTab === 'admin'
+                          ? 'bg-[var(--bg-soft)] text-[var(--accent-strong)]'
+                          : 'text-[var(--text-secondary)]'
+                      }`}
+                    >
+                      <Shield className="w-4 h-4" />
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={handleToggleTheme}
+                    aria-label="Cambiar tema"
+                    className="min-w-[34px] min-h-[34px] rounded-full flex items-center justify-center cursor-pointer"
+                  >
+                    {isDark ? (
+                      <Sun className="w-4 h-4 text-[var(--gold-motif)]" />
+                    ) : (
+                      <Moon className="w-4 h-4 text-[var(--text-primary)]" />
+                    )}
+                  </button>
+                </div>
+
                 <button
                   type="button"
                   onClick={() => setShowLandingExplicit(true)}
-                  className="text-[11px] font-semibold text-[var(--sec-text)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+                  className="min-h-[34px] px-3 rounded-full border border-[var(--border-hairline)] bg-[var(--bg-surface)] text-[11px] font-semibold text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer transition-colors"
                 >
-                  Inicio
+                  Portada
                 </button>
-              </div>
-              <div className="growy-hero-surface flex items-center gap-2.5 p-3 rounded-[22px]">
-                <EquilibrioProductIcon size="sm" />
-                <div className="min-w-0 leading-tight">
-                  <p className="font-display text-sm font-bold text-[var(--text-primary)] tracking-tight">
-                    Equilibrio
-                  </p>
-                  <p className="text-[11px] font-medium text-[var(--pos-text)] truncate">
-                    01 · Producto activo
-                  </p>
-                </div>
-              </div>
-            </div>
 
-            <div>
-              <label
-                htmlFor="desktop-business-select"
-                className="block text-[11px] font-semibold text-[var(--text-secondary)] mb-1.5 px-1"
-              >
-                Negocio / escenario activo
-              </label>
-              <select
-                id="desktop-business-select"
-                value={activeBusiness.id}
-                onChange={(e) => setActiveBusinessId(e.target.value)}
-                className="boho-input w-full text-xs font-semibold"
-              >
-                {businesses.map((b) => (
-                  <option key={b.id} value={b.id}>
-                    {b.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <nav className="space-y-1.5" aria-label="Navegación principal">
-              {NAV_ITEMS.map((item) => {
-                const isActive = activeTab === item.id;
-                return (
-                  <button
-                    key={item.id}
-                    type="button"
-                    data-tour={`nav-${item.id}`}
-                    onClick={() => setActiveTab(item.id)}
-                    className={`relative w-full min-h-[42px] flex items-center gap-3 px-4 py-2 rounded-full text-sm font-semibold transition-colors whitespace-nowrap cursor-pointer ${
-                      isActive
-                        ? 'text-[var(--accent-btn-text)]'
-                        : 'text-[var(--text-primary)] hover:bg-[var(--bg-soft)]'
-                    }`}
-                  >
-                    {isActive && (
-                      <motion.span
-                        layoutId="desktop-nav-active"
-                        transition={{ type: 'spring', stiffness: 420, damping: 34 }}
-                        className="absolute inset-0 rounded-full bg-[var(--accent-btn)] -z-10 shadow-xs"
-                      />
-                    )}
-                    <span className="shrink-0">{item.icon}</span>
-                    <span className="truncate">{item.label}</span>
-                  </button>
-                );
-              })}
-            </nav>
-          </div>
-
-        <div className="space-y-2.5 pt-4 border-t border-[var(--border-hairline)]">
-          {!subStatus.isExemptAdmin &&
-            (subStatus.isAnnual || subStatus.billingDay || subStatus.isComplimentary) && (
-            <div className="px-3.5 py-3 rounded-[22px] bg-[var(--bg-soft-alt)] border border-[var(--border-hairline)] text-[11px] space-y-1">
-              <div className="flex items-center justify-between gap-2 font-semibold text-[var(--text-primary)]">
-                <span>
-                  {subStatus.isComplimentary
-                    ? 'Cliente de prueba'
-                    : subStatus.isAnnual
-                      ? 'Plan Anual (12M)'
-                      : 'Plan $5.990/mes'}
-                </span>
-                {subStatus.isAnnual ? (
-                  <span className="font-mono text-[var(--pos-text)]">Sin cobro mes</span>
-                ) : (
-                  subStatus.billingDay && (
-                    <span className="font-mono">Día {subStatus.billingDay}</span>
-                  )
-                )}
-              </div>
-              {subStatus.isComplimentary ? (
-                <p className="text-[var(--pos-text)] font-medium">Acceso sin cobro activo</p>
-              ) : (
-                <>
-                  {subStatus.nextDueISO && (
-                    <p className="text-[var(--text-secondary)]">
-                      Vence: {formatISODateSpanish(subStatus.nextDueISO)}
-                    </p>
-                  )}
-                  <a
-                    href={
-                      subStatus.isAnnual
-                        ? appConfig.annualPaymentUrl || appConfig.paymentUrl
-                        : appConfig.paymentUrl
-                    }
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 font-bold text-[var(--accent-strong)] hover:underline pt-0.5"
-                  >
-                    <span>
-                      {subStatus.isAnnual
-                        ? 'Renovar en Mercado Pago'
-                        : 'Pagar en Mercado Pago'}
-                    </span>
-                    <ArrowRight className="w-3 h-3" />
-                  </a>
-                </>
-              )}
-            </div>
-          )}
-
-          <PWAInstallButton />
-
-          <button
-            type="button"
-            onClick={handleToggleTheme}
-            className="w-full min-h-[42px] flex items-center justify-between px-4 py-2 rounded-full border border-[var(--border-hairline)] bg-[var(--bg-surface)] text-xs font-semibold hover:bg-[var(--bg-soft)] cursor-pointer transition-colors"
-          >
-            <span>
-              {isDark
-                ? colorTone === 'formal'
-                  ? 'Modo día (Ejecutivo)'
-                  : 'Modo día (Pastel)'
-                : 'Modo noche'}
-            </span>
-            {isDark ? (
-              <Sun className="w-4 h-4 text-[var(--gold-motif)]" />
-            ) : (
-              <Moon className="w-4 h-4 text-[var(--text-primary)]" />
-            )}
-          </button>
-
-          <div className="flex items-center justify-between gap-2 px-2 pt-1 text-xs text-[var(--text-secondary)]">
-            <span className="truncate">{profile.email}</span>
-            <button
-              type="button"
-              onClick={handleSignOut}
-              title="Cerrar sesión"
-              aria-label="Cerrar sesión"
-              className="min-w-[36px] min-h-[36px] flex items-center justify-center rounded-full hover:bg-[var(--bg-soft)] cursor-pointer shrink-0"
-            >
-              <LogOut className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-      </aside>
-
-      {/* HEADER MÓVIL COMPACTO (<= 56px) */}
-      <header className="lg:hidden sticky top-0 z-30 h-14 px-4 flex items-center justify-between gap-2 border-b border-[var(--border-hairline)] bg-[var(--bg-canvas-alpha)] backdrop-blur-md">
-        <div className="min-w-0 flex items-center gap-2">
-          <GrowyLogoMark size="sm" />
-          <span className="text-[var(--border-hairline)]">|</span>
-          <div className="inline-flex items-center gap-1.5 min-w-0">
-            <EquilibrioProductIcon size="xs" />
-            <span className="font-display text-xs font-bold text-[var(--text-primary)] truncate">
-              Equilibrio
-            </span>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-0.5 shrink-0">
-          <PWAInstallButton compact />
-          {profile.role === 'admin' && (
-            <button
-              type="button"
-              onClick={() => setActiveTab('admin')}
-              aria-label="Panel Administrador"
-              className={`min-w-[44px] min-h-[44px] flex items-center justify-center rounded-full cursor-pointer ${
-                activeTab === 'admin' ? 'text-[var(--accent-strong)]' : ''
-              }`}
-            >
-              <Shield className="w-4 h-4" />
-            </button>
-          )}
-          <button
-            type="button"
-            onClick={() => setActiveTab('simple')}
-            aria-label="Explícame con peras y manzanas"
-            title="Explícame todo con peras y manzanas"
-            className={`min-w-[44px] min-h-[44px] flex items-center justify-center rounded-full cursor-pointer ${
-              activeTab === 'simple' ? 'text-[var(--accent-strong)]' : ''
-            }`}
-          >
-            <Apple className="w-4 h-4" />
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('faq')}
-            aria-label="Ayuda y FAQ"
-            className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-full cursor-pointer"
-          >
-            <HelpCircle className="w-4 h-4" />
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('settings')}
-            aria-label="Configuración y apariencia"
-            className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-full cursor-pointer"
-          >
-            <Settings2 className="w-4 h-4" />
-          </button>
-          <button
-            type="button"
-            onClick={handleToggleTheme}
-            aria-label="Cambiar tema"
-            className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-full cursor-pointer"
-          >
-            {isDark ? (
-              <Sun className="w-4 h-4 text-[#F4A974]" />
-            ) : (
-              <Moon className="w-4 h-4 text-[var(--text-primary)]" />
-            )}
-          </button>
-        </div>
-      </header>
-
-      {/* CONTENIDO PRINCIPAL */}
-      <main className="flex-1 lg:pl-64 pb-24 lg:pb-12">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-          {/* Aviso tras retorno de Mercado Pago */}
-          {mpVerificationNotice && (
-            <div className="mb-5 px-5 py-3.5 rounded-[24px] border border-[var(--sec-border)] bg-[var(--sec-soft)] flex items-center justify-between gap-3 text-xs font-medium text-[var(--sec-text)]">
-              <span>{mpVerificationNotice}</span>
-              <button
-                type="button"
-                onClick={() => setMpVerificationNotice(null)}
-                aria-label="Cerrar aviso"
-                className="min-w-[32px] min-h-[32px] flex items-center justify-center rounded-full hover:bg-black/5 cursor-pointer shrink-0"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          )}
-
-          {/* Recordatorio de vencimiento mensual ($5.990) o fin de 12 meses anual ($50.000) */}
-          {subStatus.shouldShowReminder && subStatus.nextDueISO && (
-            <div className="mb-5 px-5 py-4 rounded-[28px] border border-[var(--warn-border)] bg-[var(--warn-soft)] flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3.5 text-xs text-[var(--warn-text)]">
-              <div className="flex items-start gap-2.5 min-w-0">
-                <CalendarCheck className="w-4 h-4 shrink-0 mt-0.5" />
-                {subStatus.isAnnual ? (
-                  <p className="leading-relaxed">
-                    <strong>Recordatorio de renovación anual ($50.000):</strong> tus 12 meses de
-                    acceso completo finalizan{' '}
-                    {subStatus.daysUntilDue === 1
-                      ? 'mañana'
-                      : `en ${subStatus.daysUntilDue} días`}{' '}
-                    (<strong>{formatISODateSpanish(subStatus.nextDueISO)}</strong>). Al vencer los
-                    12 meses, la página bloqueará las funciones hasta que renueves mensual ($5.990) o
-                    anual ($50.000).
-                  </p>
-                ) : (
-                  <p className="leading-relaxed">
-                    <strong>Recordatorio de pago mensual ($5.990):</strong> tu fecha de pago (día{' '}
-                    {subStatus.billingDay}) vence{' '}
-                    {subStatus.daysUntilDue === 1
-                      ? 'mañana'
-                      : `en ${subStatus.daysUntilDue} días`}{' '}
-                    (<strong>{formatISODateSpanish(subStatus.nextDueISO)}</strong>). Al llegar esa
-                    fecha, la página dejará de funcionar hasta que pagues con Mercado Pago (o
-                    aproveches la Oferta Anual de $50.000).
-                  </p>
-                )}
-              </div>
-              <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-2 shrink-0">
-                {pushNotifications.supported &&
-                  !pushNotifications.isSubscribed &&
-                  pushNotifications.permission !== 'denied' && (
-                    <button
-                      type="button"
-                      disabled={pushNotifications.busy}
-                      onClick={() => void pushNotifications.enablePush()}
-                      className="min-h-[42px] px-4 rounded-full border border-[var(--warn-border)] bg-[var(--bg-surface)] text-[var(--warn-text)] font-bold inline-flex items-center justify-center gap-1.5 whitespace-nowrap cursor-pointer disabled:opacity-50"
-                    >
-                      <Bell className="w-3.5 h-3.5" />
-                      <span>{pushNotifications.busy ? 'Activando...' : 'Activar aviso push'}</span>
-                    </button>
-                  )}
-                <a
-                  href={appConfig.paymentUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="min-h-[42px] px-5 rounded-full border border-[var(--border-hairline)] bg-[var(--bg-surface)] text-[var(--text-primary)] font-bold inline-flex items-center justify-center gap-1.5 whitespace-nowrap"
-                >
-                  <span>Mensual $5.990</span>
-                </a>
-                <a
-                  href={appConfig.annualPaymentUrl || appConfig.paymentUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="min-h-[42px] px-5 rounded-full bg-[var(--accent-btn)] hover:bg-[var(--accent-btn-hover)] text-[var(--accent-btn-text)] font-bold inline-flex items-center justify-center gap-1.5 whitespace-nowrap shadow-xs"
-                >
-                  <span>Anual $50.000</span>
-                  <ArrowRight className="w-3.5 h-3.5" />
-                </a>
-              </div>
-            </div>
-          )}
-
-          {/* Anuncio global configurable por el administrador */}
-          {appConfig.announcementActive && appConfig.announcementText.trim() && (
-            <div className="mb-5 px-5 py-3.5 rounded-[24px] border border-[var(--sec-border)] bg-[var(--sec-soft)] flex items-center gap-3 text-xs font-medium text-[var(--sec-text)]">
-              <Megaphone className="w-4 h-4 shrink-0" />
-              <span>{appConfig.announcementText}</span>
-            </div>
-          )}
-
-          {/* Aviso de negocio de ejemplo */}
-          {activeBusiness.isDemo && (
-            <div className="mb-5 px-5 py-3.5 rounded-[24px] border border-[var(--border-hairline)] bg-[var(--bg-surface)] flex flex-wrap items-center justify-between gap-3 text-xs">
-              <p>
-                Estás viendo el negocio de ejemplo <strong>{activeBusiness.name}</strong>. Edítalo o
-                comienza con un espacio limpio en blanco.
-              </p>
-              <button
-                type="button"
-                onClick={handleClearDemoData}
-                className="min-h-[34px] px-4 rounded-full bg-[var(--accent-soft)] hover:opacity-90 font-semibold text-[var(--accent-strong)] whitespace-nowrap cursor-pointer transition-opacity"
-              >
-                Borrar datos de ejemplo
-              </button>
-            </div>
-          )}
-
-          <ViewTransition viewKey={`${activeTab}-${activeBusiness.id}`}>
-            {activeTab === 'dashboard' && (
-              <DashboardView
-                business={activeBusiness}
-                isDark={isDark}
-                colorTone={colorTone}
-                onNavigate={handleNavigate}
-                initialSubTab={dashboardSubTab}
-              />
-            )}
-
-            {activeTab === 'simple' && (
-              <SimpleExplanationView
-                business={activeBusiness}
-                onNavigate={handleNavigate}
-              />
-            )}
-
-            {activeTab === 'calculator' && (
-              <CalculatorView
-                business={activeBusiness}
-                onUpdateBusiness={updateActiveBusiness}
-              />
-            )}
-
-            {activeTab === 'projections' && (
-              <ProjectionsView
-                business={activeBusiness}
-                onUpdateBusiness={updateActiveBusiness}
-                initialSubTab={projectionsSubTab}
-              />
-            )}
-
-            {activeTab === 'actuals' && (
-              <ActualsView
-                business={activeBusiness}
-                onUpdateBusiness={updateActiveBusiness}
-                initialSubTab={actualsSubTab}
-              />
-            )}
-
-            {activeTab === 'catalog' && (
-              <CatalogAndCostsView
-                business={activeBusiness}
-                onUpdateBusiness={updateActiveBusiness}
-                initialSubTab={catalogSubTab}
-              />
-            )}
-
-            {activeTab === 'faq' && (
-              <FaqAndSupportView
-                faqs={faqs}
-                profile={profile}
-                contactEmail={appConfig.contactEmail}
-              />
-            )}
-
-            {activeTab === 'settings' && (
-              <div className="space-y-6">
-                <BusinessSettingsView
-                  state={appStateSnapshot}
-                  activeBusiness={activeBusiness}
-                  profile={profile}
-                  appConfig={appConfig}
-                  paymentHistory={paymentHistory}
-                  pushNotifications={pushNotifications}
-                  colorTone={colorTone}
-                  isDark={isDark}
-                  onChangeColorTone={setColorTone}
-                  onToggleTheme={handleToggleTheme}
-                  onUpdateActiveBusiness={updateActiveBusiness}
-                  onSelectBusiness={setActiveBusinessId}
-                  onCreateBusiness={handleCreateBusiness}
-                  onDuplicateBusiness={handleDuplicateBusiness}
-                  onDeleteBusiness={handleDeleteBusiness}
-                  onClearDemoData={handleClearDemoData}
-                  onRestoreDemoData={handleRestoreDemoData}
-                  onImportState={handleImportState}
-                  onReplayOnboardingTour={() => setShowOnboardingTour(true)}
-                />
-                <div className="flex flex-wrap gap-3">
-                  <button
-                    type="button"
-                    onClick={() => setShowLandingExplicit(true)}
-                    className="min-h-[44px] px-6 rounded-full border border-[var(--sec-border)] bg-[var(--bg-surface)] text-xs font-semibold hover:bg-[var(--sec-soft)] cursor-pointer transition-colors"
-                  >
-                    Ver landing de presentación
-                  </button>
+                {!isGuestDemoActive && (
                   <button
                     type="button"
                     onClick={handleSignOut}
-                    className="min-h-[44px] px-6 rounded-full border border-[var(--accent-soft-border)] text-[var(--danger-text)] text-xs font-semibold hover:bg-[var(--danger-soft)] cursor-pointer transition-colors"
+                    title="Cerrar sesión"
+                    aria-label="Cerrar sesión"
+                    className="min-h-[34px] px-3 rounded-full border border-[var(--border-hairline)] bg-[var(--bg-surface)] text-[11px] font-semibold text-[var(--text-secondary)] hover:text-[var(--danger-text)] inline-flex items-center gap-1.5 cursor-pointer transition-colors"
                   >
-                    Cerrar sesión ({profile.email})
+                    <LogOut className="w-3.5 h-3.5" />
+                    <span className="hidden sm:inline">Salir</span>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Aviso tras retorno de Mercado Pago */}
+            {mpVerificationNotice && (
+              <SolidCard
+                className="mb-5 p-4 !bg-[var(--sec-soft)] !border-[var(--sec-border)] flex items-center justify-between gap-3 text-xs font-medium text-[var(--sec-text)]"
+              >
+                <span>{mpVerificationNotice}</span>
+                <button
+                  type="button"
+                  onClick={() => setMpVerificationNotice(null)}
+                  aria-label="Cerrar aviso"
+                  className="min-w-[32px] min-h-[32px] flex items-center justify-center rounded-full hover:bg-black/5 cursor-pointer shrink-0"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </SolidCard>
+            )}
+
+            {/* Recordatorio de vencimiento mensual ($5.990) o fin de 12 meses anual ($50.000) */}
+            {subStatus.shouldShowReminder && subStatus.nextDueISO && (
+              <SolidCard
+                className="mb-5 p-4 !bg-[var(--warn-soft)] !border-[var(--warn-border)] flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3.5 text-xs text-[var(--warn-text)]"
+              >
+                <div className="flex items-start gap-2.5 min-w-0">
+                  <CalendarCheck className="w-4 h-4 shrink-0 mt-0.5" />
+                  {subStatus.isAnnual ? (
+                    <p className="leading-relaxed">
+                      <strong>Recordatorio de renovación anual ({planSummary.annualPriceFormatted}):</strong> tus 12 meses de
+                      acceso completo finalizan{' '}
+                      {subStatus.daysUntilDue === 1
+                        ? 'mañana'
+                        : `en ${subStatus.daysUntilDue} días`}{' '}
+                      (<strong>{formatISODateSpanish(subStatus.nextDueISO)}</strong>). Al vencer los
+                      12 meses, la página bloqueará las funciones hasta que renueves mensual ({planSummary.monthlyPriceFormatted}) o
+                      anual ({planSummary.annualPriceFormatted}).
+                    </p>
+                  ) : (
+                    <p className="leading-relaxed">
+                      <strong>Recordatorio de pago mensual ({planSummary.monthlyPriceFormatted}):</strong> tu fecha de pago (día{' '}
+                      {subStatus.billingDay}) vence{' '}
+                      {subStatus.daysUntilDue === 1
+                        ? 'mañana'
+                        : `en ${subStatus.daysUntilDue} días`}{' '}
+                      (<strong>{formatISODateSpanish(subStatus.nextDueISO)}</strong>). Al llegar esa
+                      fecha, la página dejará de funcionar hasta que pagues con Mercado Pago (o
+                      aproveches el Plan Anual de {planSummary.annualPriceFormatted} y ahorres {planSummary.savingsFormatted}).
+                    </p>
+                  )}
+                </div>
+                <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-2 shrink-0">
+                  {pushNotifications.supported &&
+                    !pushNotifications.isSubscribed &&
+                    pushNotifications.permission !== 'denied' && (
+                      <button
+                        type="button"
+                        disabled={pushNotifications.busy}
+                        onClick={() => void pushNotifications.enablePush()}
+                        className="min-h-[42px] px-4 rounded-full border border-[var(--warn-border)] bg-[var(--bg-surface)] text-[var(--warn-text)] font-bold inline-flex items-center justify-center gap-1.5 whitespace-nowrap cursor-pointer disabled:opacity-50"
+                      >
+                        <Bell className="w-3.5 h-3.5" />
+                        <span>{pushNotifications.busy ? 'Activando...' : 'Activar aviso push'}</span>
+                      </button>
+                    )}
+                  <a
+                    href={appConfig.paymentUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={() =>
+                      void trackFunnelStepOncePerSession('payment', {
+                        source: 'app',
+                        planType: 'monthly',
+                      })
+                    }
+                    className="min-h-[42px] px-5 rounded-full border border-[var(--border-hairline)] bg-[var(--bg-surface)] text-[var(--text-primary)] font-bold inline-flex items-center justify-center gap-1.5 whitespace-nowrap"
+                  >
+                    <span>Mensual {planSummary.monthlyPriceFormatted}</span>
+                  </a>
+                  <a
+                    href={appConfig.annualPaymentUrl || appConfig.paymentUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={() =>
+                      void trackFunnelStepOncePerSession('payment', {
+                        source: 'app',
+                        planType: 'annual',
+                      })
+                    }
+                    style={{ backgroundColor: 'var(--btn-navy-bg)', color: 'var(--btn-navy-text)' }}
+                    className="min-h-[42px] px-5 rounded-full font-bold inline-flex items-center justify-center gap-1.5 whitespace-nowrap shadow-xs hover:opacity-92 transition-opacity"
+                  >
+                    <span>Anual {planSummary.annualPriceFormatted}</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </a>
+                </div>
+              </SolidCard>
+            )}
+
+            {draftCarryNotice && (
+              <SolidCard
+                className="mb-5 p-4 !bg-[var(--pos-soft)] !border-[var(--pos-border)] flex items-center justify-between gap-3 text-xs font-medium text-[var(--pos-text)]"
+              >
+                <span>{draftCarryNotice}</span>
+                <button
+                  type="button"
+                  onClick={() => setDraftCarryNotice(null)}
+                  aria-label="Cerrar aviso de borrador"
+                  className="min-w-[32px] min-h-[32px] flex items-center justify-center rounded-full hover:bg-black/5 cursor-pointer shrink-0"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </SolidCard>
+            )}
+
+            {/* Anuncio global configurable por el administrador */}
+            {appConfig.announcementActive && appConfig.announcementText.trim() && (
+              <SolidCard
+                className="mb-5 p-4 !bg-[var(--sec-soft)] !border-[var(--sec-border)] flex items-center gap-3 text-xs font-medium text-[var(--sec-text)]"
+              >
+                <Megaphone className="w-4 h-4 shrink-0" />
+                <span>{appConfig.announcementText}</span>
+              </SolidCard>
+            )}
+
+            {/* Banner claro de Demo pública sin registro */}
+            {isGuestDemoActive && (
+              <SolidCard
+                className="mb-5 p-4 !bg-[var(--pos-soft)] !border-[var(--pos-border)] flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs"
+              >
+                <div className="space-y-0.5">
+                  <p className="font-bold text-[var(--pos-text)]">
+                    Modo demo navegable · Datos de ejemplo (Cafetería &amp; Repostería Canela y Vainilla)
+                  </p>
+                  <p className="text-[var(--text-secondary)]">
+                    Estás recorriendo Equilibrio sin registrarte. Puedes editar cifras para probar, pero{' '}
+                    <strong>nada se guarda en la nube todavía</strong>.
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setGuestDemoBusiness(createPublicBakeryCafeDemoBusiness())}
+                    className="min-h-[36px] px-4 rounded-full border border-[var(--border-hairline)] bg-[var(--bg-surface)] text-xs font-semibold hover:bg-[var(--bg-soft)] cursor-pointer"
+                  >
+                    Reiniciar ejemplo
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setGuestDemoMode(false);
+                      setShowLandingExplicit(false);
+                    }}
+                    className="min-h-[36px] px-4 rounded-full border border-[var(--border-hairline)] bg-[var(--bg-surface)] text-xs font-semibold hover:bg-[var(--bg-soft)] cursor-pointer"
+                  >
+                    Volver a portada
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleOpenAuthModal}
+                    style={{ backgroundColor: 'var(--btn-navy-bg)', color: 'var(--btn-navy-text)' }}
+                    className="min-h-[36px] px-5 rounded-full text-xs font-bold cursor-pointer hover:opacity-92 transition-opacity"
+                  >
+                    Entrar / Crear cuenta
                   </button>
                 </div>
-              </div>
+              </SolidCard>
             )}
 
-            {activeTab === 'admin' && profile.role === 'admin' && (
-              <AdminView adminProfile={profile} appConfig={appConfig} />
+            {/* Aviso de negocio de ejemplo (solo usuarios autenticados) */}
+            {!isGuestDemoActive && activeBusiness.isDemo && (
+              <SolidCard
+                className="mb-5 p-4 flex flex-wrap items-center justify-between gap-3 text-xs"
+              >
+                <p className="text-[var(--text-primary)]">
+                  Estás viendo el negocio de ejemplo <strong>{activeBusiness.name}</strong>. Edítalo o
+                  comienza con un espacio limpio en blanco.
+                </p>
+                <button
+                  type="button"
+                  onClick={handleClearDemoData}
+                  className="min-h-[34px] px-4 rounded-full bg-[var(--accent-soft)] hover:opacity-90 font-semibold text-[var(--accent-strong)] whitespace-nowrap cursor-pointer transition-opacity"
+                >
+                  Borrar datos de ejemplo
+                </button>
+              </SolidCard>
             )}
-          </ViewTransition>
 
-          {/* APARTADO INFERIOR PERMANENTE DE AYUDA, CONSULTAS Y ADJUNTOS */}
-          <footer className="mt-10 pt-5 border-t border-[var(--border-hairline)]">
-            <div className="growy-editorial-strip p-5 sm:p-7 rounded-[28px] flex flex-col md:flex-row md:items-center md:justify-between gap-5 shadow-xs">
-              <div className="flex items-start gap-3.5 min-w-0">
-                <div className="w-10 h-10 rounded-full bg-white/10 border border-white/15 flex items-center justify-center shrink-0 mt-0.5">
-                  <HelpCircle className="w-4 h-4 text-[#F6A59E]" />
-                </div>
-                <div className="space-y-1 min-w-0">
-                  <p className="font-editorial italic text-lg font-semibold text-white">
-                    ¿Necesitas ayuda o quieres comentarnos algo?
-                  </p>
-                  <p className="text-xs text-[#CFC5EE] leading-relaxed">
-                    Si ya contrataste tu plan ($5.990 mensual o $50.000 anual) y tienes alguna
-                    consulta, sugerencia o necesitas asistencia, escríbenos. Puedes adjuntar
-                    documentos o capturas directamente para el administrador ({appConfig.contactEmail}).
-                  </p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowProblemModal(true)}
-                className="w-full md:w-auto min-h-[46px] px-6 rounded-full bg-[var(--accent-btn)] hover:bg-[var(--accent-btn-hover)] text-[var(--accent-btn-text)] text-xs font-bold inline-flex items-center justify-center gap-2 cursor-pointer whitespace-nowrap shrink-0 transition-colors"
-              >
-                <HelpCircle className="w-3.5 h-3.5 shrink-0" />
-                <span>Escribir y adjuntar</span>
-              </button>
-            </div>
-          </footer>
-        </div>
-      </main>
-
-      {/* MODAL PARA REPORTE DE PROBLEMAS CON ADJUNTOS */}
-      <AnimatePresence>
-        {showProblemModal && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs overflow-y-auto"
-          >
-            <motion.div
-              initial={{ opacity: 0, y: 12, scale: 0.98 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: 8, scale: 0.98 }}
-              transition={{ duration: 0.25, ease: GROWY_EASE }}
-              className="relative w-full max-w-xl my-6"
-            >
-              <button
-                type="button"
-                onClick={() => setShowProblemModal(false)}
-                aria-label="Cerrar ventana"
-                className="absolute top-3 right-3 z-10 min-w-[36px] min-h-[36px] rounded-full bg-[var(--bg-soft)] hover:bg-[var(--border-hairline)] flex items-center justify-center cursor-pointer"
-              >
-                <X className="w-4 h-4 text-[var(--text-primary)]" />
-              </button>
-              <ProblemReportPanel
-                profile={profile}
-                contactEmail={appConfig.contactEmail}
-              />
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* NAVEGACIÓN INFERIOR EN MÓVIL (<= 64px) */}
-      <nav
-        aria-label="Navegación inferior móvil"
-        className="lg:hidden fixed bottom-0 left-0 right-0 z-40 h-16 grid grid-cols-5 items-center border-t border-[var(--border-hairline)] bg-[var(--bg-surface-alpha)] backdrop-blur-md"
-      >
-        {NAV_ITEMS.slice(0, 5).map((item) => {
-          const isActive = activeTab === item.id;
-          return (
-            <button
-              key={item.id}
-              type="button"
-              data-tour={`nav-${item.id}`}
-              onClick={() => setActiveTab(item.id)}
-              className={`relative min-h-[44px] flex flex-col items-center justify-center gap-0.5 px-1 cursor-pointer transition-colors ${
-                isActive
-                  ? 'text-[var(--accent-strong)] font-semibold'
-                  : 'text-[var(--text-secondary)]'
-              }`}
-            >
-              {isActive && (
-                <motion.span
-                  layoutId="mobile-nav-active"
-                  transition={{ type: 'spring', stiffness: 420, damping: 32 }}
-                  className="absolute top-0 left-4 right-4 h-0.5 rounded-full bg-[var(--accent-strong)]"
+            <ViewTransition viewKey={`${activeTab}-${activeBusiness.id}`}>
+              {activeTab === 'dashboard' && (
+                <DashboardView
+                  business={activeBusiness}
+                  isDark={isDark}
+                  colorTone={colorTone}
+                  userName={profile?.displayName}
+                  onNavigate={handleNavigate}
+                  initialSubTab={dashboardSubTab}
                 />
               )}
-              {item.icon}
-              <span className="text-[10px] tracking-tight truncate max-w-full">
-                {item.shortLabel}
-              </span>
-            </button>
-          );
-        })}
-      </nav>
 
-      <OnboardingTourModal
-        open={showOnboardingTour}
-        userName={profile.displayName}
-        onNavigate={handleNavigate}
-        onComplete={() => {
-          setShowOnboardingTour(false);
-          try {
-            localStorage.setItem(`growy_onboarding_done_${profile.uid}`, '1');
-          } catch {
-            // Ignorar
-          }
-          setProfile((prev) => (prev ? { ...prev, onboardingCompleted: true } : prev));
-          if (profile.onboardingCompleted !== true) {
-            void markUserOnboardingCompleted(profile.uid).catch(() => {});
-          }
-        }}
-      />
+              {activeTab === 'simple' && (
+                <SimpleExplanationView
+                  business={activeBusiness}
+                  onNavigate={handleNavigate}
+                />
+              )}
 
-      <OfflineIndicator />
+              {activeTab === 'calculator' && (
+                <CalculatorView
+                  business={activeBusiness}
+                  onUpdateBusiness={updateActiveBusiness}
+                />
+              )}
+
+              {activeTab === 'projections' && (
+                <ProjectionsView
+                  business={activeBusiness}
+                  onUpdateBusiness={updateActiveBusiness}
+                  initialSubTab={projectionsSubTab}
+                />
+              )}
+
+              {activeTab === 'actuals' && (
+                <ActualsView
+                  business={activeBusiness}
+                  profile={profile ?? undefined}
+                  onUpdateBusiness={updateActiveBusiness}
+                  initialSubTab={actualsSubTab}
+                />
+              )}
+
+              {activeTab === 'catalog' && (
+                <CatalogAndCostsView
+                  business={activeBusiness}
+                  onUpdateBusiness={updateActiveBusiness}
+                  initialSubTab={catalogSubTab}
+                />
+              )}
+
+              {activeTab === 'faq' && !isGuestDemoActive && profile && (
+                <FaqAndSupportView
+                  faqs={faqs}
+                  profile={profile}
+                  contactEmail={appConfig.contactEmail}
+                />
+              )}
+
+              {activeTab === 'settings' && (
+                <div className="space-y-6">
+                  <BusinessSettingsView
+                    state={appStateSnapshot}
+                    activeBusiness={activeBusiness}
+                    profile={profile ?? undefined}
+                    appConfig={appConfig}
+                    paymentHistory={paymentHistory}
+                    pushNotifications={profile ? pushNotifications : undefined}
+                    colorTone={colorTone}
+                    isDark={isDark}
+                    onChangeColorTone={setColorTone}
+                    onToggleTheme={handleToggleTheme}
+                    onUpdateActiveBusiness={updateActiveBusiness}
+                    onSelectBusiness={setActiveBusinessId}
+                    onCreateBusiness={handleCreateBusiness}
+                    onDuplicateBusiness={handleDuplicateBusiness}
+                    onDeleteBusiness={handleDeleteBusiness}
+                    onClearDemoData={handleClearDemoData}
+                    onRestoreDemoData={handleRestoreDemoData}
+                    onImportState={handleImportState}
+                    onReplayOnboardingTour={profile ? () => setShowOnboardingTour(true) : undefined}
+                  />
+                  <div className="flex flex-wrap gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setShowLandingExplicit(true)}
+                      className="min-h-[44px] px-6 rounded-full border border-[var(--sec-border)] bg-[var(--bg-surface)] text-xs font-semibold hover:bg-[var(--sec-soft)] cursor-pointer transition-colors"
+                    >
+                      Ver landing de presentación
+                    </button>
+                    {isGuestDemoActive ? (
+                      <button
+                        type="button"
+                        onClick={handleOpenAuthModal}
+                        style={{ backgroundColor: 'var(--btn-navy-bg)', color: 'var(--btn-navy-text)' }}
+                        className="min-h-[44px] px-6 rounded-full text-xs font-bold cursor-pointer hover:opacity-92 transition-opacity"
+                      >
+                        Entrar y guardar mi propio negocio
+                      </button>
+                    ) : profile ? (
+                      <button
+                        type="button"
+                        onClick={handleSignOut}
+                        className="min-h-[44px] px-6 rounded-full border border-[var(--accent-soft-border)] text-[var(--danger-text)] text-xs font-semibold hover:bg-[var(--danger-soft)] cursor-pointer transition-colors"
+                      >
+                        Cerrar sesión ({profile.email})
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+              )}
+
+              {activeTab === 'admin' && !isGuestDemoActive && profile?.role === 'admin' && (
+                <AdminView adminProfile={profile} appConfig={appConfig} />
+              )}
+            </ViewTransition>
+
+            {/* APARTADO INFERIOR PERMANENTE DE AYUDA, CONSULTAS Y ADJUNTOS */}
+            {!isGuestDemoActive && profile && (
+              <footer className="mt-10 pt-5 border-t border-[var(--border-hairline)]">
+                <div className="growy-editorial-strip p-5 sm:p-7 rounded-[32px] flex flex-col md:flex-row md:items-center md:justify-between gap-5 shadow-xs">
+                  <div className="flex items-start gap-3.5 min-w-0">
+                    <div className="w-10 h-10 rounded-full bg-white/10 border border-white/15 flex items-center justify-center shrink-0 mt-0.5">
+                      <HelpCircle className="w-4 h-4 text-[#F6A59E]" />
+                    </div>
+                    <div className="space-y-1 min-w-0">
+                      <p className="font-display text-lg font-extrabold text-white tracking-tight">
+                        <EditorialText text="¿Necesitas *ayuda* o quieres comentarnos algo?" />
+                      </p>
+                      <p className="text-xs text-[#CFC5EE] leading-relaxed">
+                        Si ya contrataste tu plan ($5.990 mensual o $50.000 anual) y tienes alguna
+                        consulta, sugerencia o necesitas asistencia, escríbenos. Puedes adjuntar
+                        documentos o capturas directamente para el administrador ({appConfig.contactEmail}).
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowProblemModal(true)}
+                    className="w-full md:w-auto min-h-[46px] px-6 rounded-full bg-[#F6A59E] hover:opacity-92 text-[#1F1B2E] text-xs font-bold inline-flex items-center justify-center gap-2 cursor-pointer whitespace-nowrap shrink-0 transition-opacity"
+                  >
+                    <HelpCircle className="w-3.5 h-3.5 shrink-0" />
+                    <span>Escribir y adjuntar</span>
+                  </button>
+                </div>
+              </footer>
+            )}
+          </div>
+        </main>
+
+        {/* MODAL PARA REPORTE DE PROBLEMAS CON ADJUNTOS */}
+        <AnimatePresence>
+          {showProblemModal && !isGuestDemoActive && profile && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs overflow-y-auto"
+            >
+              <motion.div
+                initial={{ opacity: 0, y: 12, scale: 0.98 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: 8, scale: 0.98 }}
+                transition={{ duration: 0.25, ease: GROWY_EASE }}
+                className="relative w-full max-w-xl my-6"
+              >
+                <button
+                  type="button"
+                  onClick={() => setShowProblemModal(false)}
+                  aria-label="Cerrar ventana"
+                  className="absolute top-3 right-3 z-10 min-w-[36px] min-h-[36px] rounded-full bg-[var(--bg-soft)] hover:bg-[var(--border-hairline)] flex items-center justify-center cursor-pointer"
+                >
+                  <X className="w-4 h-4 text-[var(--text-primary)]" />
+                </button>
+                <ProblemReportPanel
+                  profile={profile}
+                  contactEmail={appConfig.contactEmail}
+                />
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {!isGuestDemoActive && profile && (
+          <OnboardingTourModal
+            open={showOnboardingTour}
+            userName={profile.displayName}
+            onNavigate={handleNavigate}
+            onComplete={() => {
+              setShowOnboardingTour(false);
+              void trackFunnelStepOncePerSession('onboarding', { source: 'app' });
+              try {
+                localStorage.setItem(`growy_onboarding_done_${profile.uid}`, '1');
+              } catch {
+                // Ignorar
+              }
+              setProfile((prev) => (prev ? { ...prev, onboardingCompleted: true } : prev));
+              if (profile.onboardingCompleted !== true) {
+                void markUserOnboardingCompleted(profile.uid).catch(() => {});
+              }
+            }}
+          />
+        )}
+
+        <AuthModal
+          open={authModalOpen}
+          onClose={() => setAuthModalOpen(false)}
+          onGoogleSignIn={handleGoogleSignIn}
+          onEmailAuth={handleEmailAuth}
+          authLoading={authLoading}
+          externalError={authError}
+        />
+
+        <OfflineIndicator />
       </div>
     </GrowyMotionRoot>
   );

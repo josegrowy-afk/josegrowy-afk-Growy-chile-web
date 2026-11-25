@@ -112,7 +112,7 @@ export const ProblemReportPanel: React.FC<ProblemReportPanelProps> = ({
       className={`${
         compact
           ? 'p-4 sm:p-5 rounded-2xl border border-[var(--border-hairline)] bg-[var(--bg-soft-alt)] space-y-3.5'
-          : 'boho-card p-6 space-y-4'
+          : 'growy-solid p-6 space-y-4'
       }`}
     >
       <div className="flex items-start gap-3">
@@ -250,7 +250,11 @@ export const ProblemReportPanel: React.FC<ProblemReportPanelProps> = ({
       <button
         type="submit"
         disabled={sending}
-        className="w-full sm:w-auto min-h-[44px] px-6 rounded-full bg-[var(--accent-btn)] hover:bg-[var(--accent-btn-hover)] text-[var(--accent-btn-text)] text-xs font-bold inline-flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60 shadow-sm"
+        style={{
+          backgroundColor: 'var(--btn-navy-bg)',
+          color: 'var(--btn-navy-text)',
+        }}
+        className="w-full sm:w-auto min-h-[44px] px-6 rounded-full text-xs font-bold inline-flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60 shadow-sm hover:opacity-92 transition-opacity"
       >
         <Send className="w-3.5 h-3.5" />
         <span>{sending ? 'Enviando mensaje...' : 'Enviar mensaje al administrador'}</span>

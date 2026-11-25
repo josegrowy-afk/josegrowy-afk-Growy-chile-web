@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
@@ -8,6 +8,7 @@ import {
   UserCheck,
 } from 'lucide-react';
 import { formatCurrency } from '../finance/formulas';
+import { calculateArApAgingAndDurations } from '../finance/phase2Insights';
 import {
   buildCollectReceivablePatch,
   buildCreditSalePatch,
@@ -24,6 +25,7 @@ import type {
   OperationalObligationCategory,
   PayablePriority,
 } from '../types/finance';
+import { FloatingSearchBar, SectionTitle, SolidCard } from './design-system';
 
 interface ReceivablesPayablesPanelProps {
   mode: 'receivables' | 'payables';
@@ -46,6 +48,7 @@ export const ReceivablesPayablesPanel: React.FC<ReceivablesPayablesPanelProps> =
     [business.payables]
   );
   const cashFlow = useMemo(() => calculateCashFlowProjection(business), [business]);
+  const agingSummary = useMemo(() => calculateArApAgingAndDurations(business), [business]);
 
   // Estado formulario CxC (Venta a crédito)
   const [arClient, setArClient] = useState('');
@@ -77,6 +80,38 @@ export const ReceivablesPayablesPanel: React.FC<ReceivablesPayablesPanelProps> =
   const [payingId, setPayingId] = useState<string | null>(null);
   const [payAmt, setPayAmt] = useState('');
   const [payDate, setPayDate] = useState(todayISO);
+
+  // Búsqueda y filtro
+  const [searchQuery, setSearchQuery] = useState('');
+  const [onlyOverdue, setOnlyOverdue] = useState(false);
+  const createFormRef = useRef<HTMLFormElement>(null);
+
+  const normalizedQuery = searchQuery.trim().toLowerCase();
+
+  const filteredArItems = useMemo(() => {
+    return arSummary.items.filter((row) => {
+      if (onlyOverdue && row.status !== 'vencida') return false;
+      if (!normalizedQuery) return true;
+      return (
+        row.item.clientName.toLowerCase().includes(normalizedQuery) ||
+        row.item.documentRef.toLowerCase().includes(normalizedQuery) ||
+        (row.item.notes ?? '').toLowerCase().includes(normalizedQuery)
+      );
+    });
+  }, [arSummary.items, normalizedQuery, onlyOverdue]);
+
+  const filteredApItems = useMemo(() => {
+    return apSummary.items.filter((row) => {
+      if (onlyOverdue && row.status !== 'vencida') return false;
+      if (!normalizedQuery) return true;
+      const catLabel = OBLIGATION_CATEGORY_LABELS[row.item.category]?.toLowerCase() ?? '';
+      return (
+        row.item.supplierName.toLowerCase().includes(normalizedQuery) ||
+        row.item.documentRef.toLowerCase().includes(normalizedQuery) ||
+        catLabel.includes(normalizedQuery)
+      );
+    });
+  }, [apSummary.items, normalizedQuery, onlyOverdue]);
 
   const handleCreateReceivable = (e: React.FormEvent) => {
     e.preventDefault();
@@ -185,7 +220,7 @@ export const ReceivablesPayablesPanel: React.FC<ReceivablesPayablesPanelProps> =
       <div className="space-y-6">
         {/* KPIs CxC */}
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-          <div className="rounded-[28px] p-5 bg-[var(--sec-soft)] border border-[var(--sec-border)]">
+          <div className="rounded-[24px] p-5 bg-[var(--sec-soft)] border border-[var(--sec-border)]">
             <p className="text-xs font-semibold text-[var(--sec-muted)]">
               Saldo pendiente por cobrar
             </p>
@@ -197,7 +232,7 @@ export const ReceivablesPayablesPanel: React.FC<ReceivablesPayablesPanelProps> =
             </p>
           </div>
 
-          <div className="rounded-[28px] p-5 bg-[var(--danger-soft)] border border-[var(--border-hairline)]">
+          <div className="rounded-[24px] p-5 bg-[var(--danger-soft)] border border-[var(--border-hairline)]">
             <p className="text-xs font-semibold text-[var(--danger-text)]">Cartera vencida</p>
             <p className="font-mono tabular-nums text-2xl font-bold text-[var(--danger-text)] mt-2">
               {formatCurrency(arSummary.overdueAmount, business.currency)}
@@ -207,7 +242,7 @@ export const ReceivablesPayablesPanel: React.FC<ReceivablesPayablesPanelProps> =
             </p>
           </div>
 
-          <div className="rounded-[28px] p-5 bg-[var(--pos-soft)] border border-[var(--pos-border)]">
+          <div className="rounded-[24px] p-5 bg-[var(--pos-soft)] border border-[var(--pos-border)]">
             <p className="text-xs font-semibold text-[var(--pos-muted)]">
               Período promedio de cobranza
             </p>
@@ -221,7 +256,7 @@ export const ReceivablesPayablesPanel: React.FC<ReceivablesPayablesPanelProps> =
             </p>
           </div>
 
-          <div className="rounded-[28px] p-5 bg-[var(--warn-soft)] border border-[var(--warn-border)]">
+          <div className="rounded-[24px] p-5 bg-[var(--warn-soft)] border border-[var(--warn-border)]">
             <p className="text-xs font-semibold text-[var(--warn-muted)]">
               Total cobrado a la fecha
             </p>
@@ -233,6 +268,67 @@ export const ReceivablesPayablesPanel: React.FC<ReceivablesPayablesPanelProps> =
             </p>
           </div>
         </div>
+
+        {/* ANTIGÜEDAD DE CARTERA POR COBRAR (0–30, 31–60, 61+ DÍAS) */}
+        <SolidCard as="section" className="p-5 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <SectionTitle
+              as="h2"
+              size="sm"
+              title="Antigüedad de cuentas por *cobrar*"
+              subtitle="Tramos de antigüedad del saldo pendiente desde emisión y comparación de plazos de cobro vs. pago."
+            />
+            <div className="flex flex-wrap items-center gap-3 text-xs">
+              <span className="px-3 py-1 rounded-full bg-[var(--pos-soft)] text-[var(--pos-text)] font-semibold">
+                Cobro prom.:{' '}
+                <strong className="font-mono">
+                  {agingSummary.averageCollectionDays !== null
+                    ? `${agingSummary.averageCollectionDays} d.`
+                    : 'Sin historial'}
+                </strong>
+              </span>
+              <span className="px-3 py-1 rounded-full bg-[var(--bg-soft-alt)] border border-[var(--border-hairline)] text-[var(--text-secondary)] font-semibold">
+                Pago prom.:{' '}
+                <strong className="font-mono text-[var(--text-primary)]">
+                  {agingSummary.averagePaymentDays !== null
+                    ? `${agingSummary.averagePaymentDays} d.`
+                    : 'Sin historial'}
+                </strong>
+              </span>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            {agingSummary.receivablesAging.buckets.map((bucket) => (
+              <div
+                key={bucket.key}
+                className={`p-4 rounded-2xl border ${
+                  bucket.key === '61_plus' && bucket.amount > 0
+                    ? 'bg-[var(--danger-soft)] border-[var(--accent-soft-border)]'
+                    : bucket.key === '31_60' && bucket.amount > 0
+                      ? 'bg-[var(--warn-soft)] border-[var(--warn-border)]'
+                      : 'bg-[var(--bg-soft-alt)] border-[var(--border-hairline)]'
+                }`}
+              >
+                <div className="flex items-center justify-between text-xs font-semibold">
+                  <span className="text-[var(--text-primary)]">{bucket.label}</span>
+                  <span className="font-mono text-[var(--text-secondary)]">
+                    {bucket.count} doc. ({bucket.sharePercent.toFixed(0)}%)
+                  </span>
+                </div>
+                <p className="font-mono tabular-nums text-lg font-bold text-[var(--text-primary)] mt-1">
+                  {formatCurrency(bucket.amount, business.currency)}
+                </p>
+              </div>
+            ))}
+          </div>
+
+          {agingSummary.gapWarning && (
+            <p className="text-xs text-[var(--warn-text)] font-medium">
+              {agingSummary.gapWarning}
+            </p>
+          )}
+        </SolidCard>
 
         {/* ALERTA CLIENTES CON ATRASOS */}
         {arSummary.lateClientAlerts.length > 0 && (
@@ -258,14 +354,29 @@ export const ReceivablesPayablesPanel: React.FC<ReceivablesPayablesPanelProps> =
           </div>
         )}
 
+        <FloatingSearchBar
+          value={searchQuery}
+          onChange={setSearchQuery}
+          placeholder="Buscar cliente o factura por cobrar..."
+          label="Buscar en cuentas por cobrar"
+          onFilterClick={() => setOnlyOverdue((v) => !v)}
+          filterActive={onlyOverdue}
+          filterLabel="Mostrar solo documentos vencidos"
+          onAddClick={() =>
+            createFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+          }
+          addLabel="Ir al formulario de venta a crédito"
+        />
+
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          <form onSubmit={handleCreateReceivable} className="lg:col-span-5 boho-card p-6 space-y-4">
-            <div className="flex items-center gap-2">
-              <UserCheck className="w-5 h-5 text-[var(--sec-text)] shrink-0" />
-              <div>
-                <h2 className="font-display text-lg font-bold text-[var(--text-primary)]">
-                  Registrar venta a crédito / factura por cobrar
-                </h2>
+          <SolidCard className="lg:col-span-5 p-6">
+            <form ref={createFormRef} onSubmit={handleCreateReceivable} className="space-y-4">
+              <div className="flex items-center gap-2">
+                <UserCheck className="w-5 h-5 text-[var(--sec-text)] shrink-0" />
+                <div>
+                  <h2 className="font-display text-lg font-bold text-[var(--text-primary)]">
+                    Registrar venta a crédito / factura por cobrar
+                  </h2>
                 <p className="text-xs text-[var(--text-secondary)]">
                   Actualiza flujo proyectado y descuenta inventario si asocias producto.
                 </p>
@@ -382,16 +493,21 @@ export const ReceivablesPayablesPanel: React.FC<ReceivablesPayablesPanelProps> =
 
             <button
               type="submit"
-              className="w-full min-h-[44px] rounded-full bg-[var(--accent-btn)] hover:bg-[var(--accent-btn-hover)] text-[var(--accent-btn-text)] text-xs font-bold inline-flex items-center justify-center gap-2 cursor-pointer shadow-sm transition-colors"
+              style={{
+                backgroundColor: 'var(--btn-navy-bg)',
+                color: 'var(--btn-navy-text)',
+              }}
+              className="w-full min-h-[44px] rounded-full text-xs font-bold inline-flex items-center justify-center gap-2 cursor-pointer shadow-sm hover:opacity-92 transition-opacity"
             >
               <Plus className="w-4 h-4" />
               <span>Guardar cuenta por cobrar</span>
             </button>
-          </form>
+            </form>
+          </SolidCard>
 
-          <section className="lg:col-span-7 boho-card p-6 space-y-4">
+          <SolidCard as="section" className="lg:col-span-7 p-6 space-y-4">
             <h3 className="font-display text-lg font-bold text-[var(--text-primary)]">
-              Listado de cobranza ({arSummary.items.length})
+              Listado de cobranza ({filteredArItems.length})
             </h3>
 
             {arSummary.items.length === 0 ? (
@@ -399,9 +515,13 @@ export const ReceivablesPayablesPanel: React.FC<ReceivablesPayablesPanelProps> =
                 No tienes cuentas por cobrar registradas. Cuando registres ventas a crédito
                 aparecerán aquí clasificadas por vencimiento.
               </p>
+            ) : filteredArItems.length === 0 ? (
+              <p className="text-sm text-[var(--text-secondary)] py-10 text-center">
+                Ninguna cuenta por cobrar coincide con el filtro actual.
+              </p>
             ) : (
               <div className="space-y-3">
-                {arSummary.items.map((row) => (
+                {filteredArItems.map((row) => (
                   <div
                     key={row.item.id}
                     className="p-4 rounded-2xl border border-[var(--border-hairline)] bg-[var(--bg-soft-alt)] space-y-2.5"
@@ -488,7 +608,11 @@ export const ReceivablesPayablesPanel: React.FC<ReceivablesPayablesPanelProps> =
                               setCollectAmt(String(row.pendingBalance));
                               setCollectDate(todayISO);
                             }}
-                            className="min-h-[36px] px-4 rounded-full bg-[var(--accent-btn)] text-[var(--accent-btn-text)] text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer"
+                            style={{
+                              backgroundColor: 'var(--btn-navy-bg)',
+                              color: 'var(--btn-navy-text)',
+                            }}
+                            className="min-h-[36px] px-4 rounded-full text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer hover:opacity-92 transition-opacity"
                           >
                             <CheckCircle2 className="w-3.5 h-3.5" />
                             <span>Registrar cobro</span>
@@ -512,7 +636,7 @@ export const ReceivablesPayablesPanel: React.FC<ReceivablesPayablesPanelProps> =
                 ))}
               </div>
             )}
-          </section>
+          </SolidCard>
         </div>
       </div>
     );
@@ -524,7 +648,7 @@ export const ReceivablesPayablesPanel: React.FC<ReceivablesPayablesPanelProps> =
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-        <div className="rounded-[28px] p-5 bg-[var(--sec-soft)] border border-[var(--sec-border)]">
+        <div className="rounded-[24px] p-5 bg-[var(--sec-soft)] border border-[var(--sec-border)]">
           <p className="text-xs font-semibold text-[var(--sec-muted)]">
             Saldo pendiente por pagar
           </p>
@@ -536,7 +660,7 @@ export const ReceivablesPayablesPanel: React.FC<ReceivablesPayablesPanelProps> =
           </p>
         </div>
 
-        <div className="rounded-[28px] p-5 bg-[var(--danger-soft)] border border-[var(--border-hairline)]">
+        <div className="rounded-[24px] p-5 bg-[var(--danger-soft)] border border-[var(--border-hairline)]">
           <p className="text-xs font-semibold text-[var(--danger-text)]">Obligaciones vencidas</p>
           <p className="font-mono tabular-nums text-2xl font-bold text-[var(--danger-text)] mt-2">
             {formatCurrency(apSummary.overdueAmount, business.currency)}
@@ -546,7 +670,7 @@ export const ReceivablesPayablesPanel: React.FC<ReceivablesPayablesPanelProps> =
           </p>
         </div>
 
-        <div className="rounded-[28px] p-5 bg-[var(--warn-soft)] border border-[var(--warn-border)]">
+        <div className="rounded-[24px] p-5 bg-[var(--warn-soft)] border border-[var(--warn-border)]">
           <p className="text-xs font-semibold text-[var(--warn-muted)]">Prioridad alta</p>
           <p className="font-mono tabular-nums text-2xl font-bold text-[var(--warn-text)] mt-2">
             {formatCurrency(apSummary.highPriorityAmount, business.currency)}
@@ -556,7 +680,7 @@ export const ReceivablesPayablesPanel: React.FC<ReceivablesPayablesPanelProps> =
           </p>
         </div>
 
-        <div className="rounded-[28px] p-5 bg-[var(--pos-soft)] border border-[var(--pos-border)]">
+        <div className="rounded-[24px] p-5 bg-[var(--pos-soft)] border border-[var(--pos-border)]">
           <p className="text-xs font-semibold text-[var(--pos-muted)]">Pagos ya realizados</p>
           <p className="font-mono tabular-nums text-2xl font-bold text-[var(--pos-text)] mt-2">
             {formatCurrency(apSummary.totalPaid, business.currency)}
@@ -566,6 +690,61 @@ export const ReceivablesPayablesPanel: React.FC<ReceivablesPayablesPanelProps> =
           </p>
         </div>
       </div>
+
+      {/* ANTIGÜEDAD DE CUENTAS POR PAGAR (0–30, 31–60, 61+ DÍAS) */}
+      <SolidCard as="section" className="p-5 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <SectionTitle
+            as="h2"
+            size="sm"
+            title="Antigüedad de cuentas por *pagar*"
+            subtitle="Tramos de antigüedad de tus compromisos pendientes desde emisión y días promedio de pago."
+          />
+          <div className="flex flex-wrap items-center gap-3 text-xs">
+            <span className="px-3 py-1 rounded-full bg-[var(--sec-soft)] text-[var(--sec-text)] font-semibold">
+              Pago prom.:{' '}
+              <strong className="font-mono">
+                {agingSummary.averagePaymentDays !== null
+                  ? `${agingSummary.averagePaymentDays} d.`
+                  : 'Sin historial'}
+              </strong>
+            </span>
+            <span className="px-3 py-1 rounded-full bg-[var(--bg-soft-alt)] border border-[var(--border-hairline)] text-[var(--text-secondary)] font-semibold">
+              Cobro prom.:{' '}
+              <strong className="font-mono text-[var(--text-primary)]">
+                {agingSummary.averageCollectionDays !== null
+                  ? `${agingSummary.averageCollectionDays} d.`
+                  : 'Sin historial'}
+              </strong>
+            </span>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          {agingSummary.payablesAging.buckets.map((bucket) => (
+            <div
+              key={bucket.key}
+              className={`p-4 rounded-2xl border ${
+                bucket.key === '61_plus' && bucket.amount > 0
+                  ? 'bg-[var(--danger-soft)] border-[var(--accent-soft-border)]'
+                  : bucket.key === '31_60' && bucket.amount > 0
+                    ? 'bg-[var(--warn-soft)] border-[var(--warn-border)]'
+                    : 'bg-[var(--bg-soft-alt)] border-[var(--border-hairline)]'
+              }`}
+            >
+              <div className="flex items-center justify-between text-xs font-semibold">
+                <span className="text-[var(--text-primary)]">{bucket.label}</span>
+                <span className="font-mono text-[var(--text-secondary)]">
+                  {bucket.count} doc. ({bucket.sharePercent.toFixed(0)}%)
+                </span>
+              </div>
+              <p className="font-mono tabular-nums text-lg font-bold text-[var(--text-primary)] mt-1">
+                {formatCurrency(bucket.amount, business.currency)}
+              </p>
+            </div>
+          ))}
+        </div>
+      </SolidCard>
 
       {coverageDeficit && apSummary.totalPending > 0 && (
         <div className="p-4 rounded-2xl border border-[var(--warn-border)] bg-[var(--warn-soft)] flex items-start gap-3 text-xs">
@@ -579,19 +758,34 @@ export const ReceivablesPayablesPanel: React.FC<ReceivablesPayablesPanelProps> =
         </div>
       )}
 
+      <FloatingSearchBar
+        value={searchQuery}
+        onChange={setSearchQuery}
+        placeholder="Buscar proveedor, SII o factura por pagar..."
+        label="Buscar en cuentas por pagar"
+        onFilterClick={() => setOnlyOverdue((v) => !v)}
+        filterActive={onlyOverdue}
+        filterLabel="Mostrar solo obligaciones vencidas"
+        onAddClick={() =>
+          createFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+        }
+        addLabel="Ir al formulario de obligación por pagar"
+      />
+
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        <form onSubmit={handleCreatePayable} className="lg:col-span-5 boho-card p-6 space-y-4">
-          <div className="flex items-center gap-2">
-            <CreditCard className="w-5 h-5 text-[var(--accent-strong)] shrink-0" />
-            <div>
-              <h2 className="font-display text-lg font-bold text-[var(--text-primary)]">
-                Registrar cuenta u obligación por pagar
-              </h2>
-              <p className="text-xs text-[var(--text-secondary)]">
-                Incluye proveedores, remuneraciones, SII/impuestos o cuotas de crédito.
-              </p>
+        <SolidCard className="lg:col-span-5 p-6">
+          <form ref={createFormRef} onSubmit={handleCreatePayable} className="space-y-4">
+            <div className="flex items-center gap-2">
+              <CreditCard className="w-5 h-5 text-[var(--accent-strong)] shrink-0" />
+              <div>
+                <h2 className="font-display text-lg font-bold text-[var(--text-primary)]">
+                  Registrar cuenta u obligación por pagar
+                </h2>
+                <p className="text-xs text-[var(--text-secondary)]">
+                  Incluye proveedores, remuneraciones, SII/impuestos o cuotas de crédito.
+                </p>
+              </div>
             </div>
-          </div>
 
           {apError && (
             <p className="text-xs font-semibold text-[var(--danger-text)] bg-[var(--danger-soft)] p-3 rounded-2xl">
@@ -692,16 +886,21 @@ export const ReceivablesPayablesPanel: React.FC<ReceivablesPayablesPanelProps> =
 
           <button
             type="submit"
-            className="w-full min-h-[44px] rounded-full bg-[var(--accent-btn)] hover:bg-[var(--accent-btn-hover)] text-[var(--accent-btn-text)] text-xs font-bold inline-flex items-center justify-center gap-2 cursor-pointer shadow-sm transition-colors"
+            style={{
+              backgroundColor: 'var(--btn-navy-bg)',
+              color: 'var(--btn-navy-text)',
+            }}
+            className="w-full min-h-[44px] rounded-full text-xs font-bold inline-flex items-center justify-center gap-2 cursor-pointer shadow-sm hover:opacity-92 transition-opacity"
           >
             <Plus className="w-4 h-4" />
             <span>Guardar cuenta por pagar</span>
           </button>
-        </form>
+          </form>
+        </SolidCard>
 
-        <section className="lg:col-span-7 boho-card p-6 space-y-4">
+        <SolidCard as="section" className="lg:col-span-7 p-6 space-y-4">
           <h3 className="font-display text-lg font-bold text-[var(--text-primary)]">
-            Obligaciones priorizadas por vencimiento ({apSummary.items.length})
+            Obligaciones priorizadas por vencimiento ({filteredApItems.length})
           </h3>
 
           {apSummary.items.length === 0 ? (
@@ -709,9 +908,13 @@ export const ReceivablesPayablesPanel: React.FC<ReceivablesPayablesPanelProps> =
               No tienes cuentas por pagar registradas. Las compras de inventario a crédito y tus
               obligaciones aparecerán aquí ordenadas por urgencia.
             </p>
+          ) : filteredApItems.length === 0 ? (
+            <p className="text-sm text-[var(--text-secondary)] py-10 text-center">
+              Ninguna cuenta por pagar coincide con el filtro actual.
+            </p>
           ) : (
             <div className="space-y-3">
-              {apSummary.items.map((row) => (
+              {filteredApItems.map((row) => (
                 <div
                   key={row.item.id}
                   className="p-4 rounded-2xl border border-[var(--border-hairline)] bg-[var(--bg-soft-alt)] space-y-2.5"
@@ -797,7 +1000,11 @@ export const ReceivablesPayablesPanel: React.FC<ReceivablesPayablesPanelProps> =
                             setPayAmt(String(row.pendingBalance));
                             setPayDate(todayISO);
                           }}
-                          className="min-h-[36px] px-4 rounded-full bg-[var(--accent-btn)] text-[var(--accent-btn-text)] text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer"
+                          style={{
+                            backgroundColor: 'var(--btn-navy-bg)',
+                            color: 'var(--btn-navy-text)',
+                          }}
+                          className="min-h-[36px] px-4 rounded-full text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer hover:opacity-92 transition-opacity"
                         >
                           <CheckCircle2 className="w-3.5 h-3.5" />
                           <span>Registrar pago</span>
@@ -821,7 +1028,7 @@ export const ReceivablesPayablesPanel: React.FC<ReceivablesPayablesPanelProps> =
               ))}
             </div>
           )}
-        </section>
+        </SolidCard>
       </div>
     </div>
   );

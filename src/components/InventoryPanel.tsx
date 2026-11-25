@@ -16,6 +16,7 @@ import {
 } from '../finance/smeIntelligence';
 import { toISODateLocal } from '../finance/subscription';
 import type { BusinessWorkspace, InventoryMovement } from '../types/finance';
+import { SectionTitle, SolidCard } from './design-system';
 
 interface InventoryPanelProps {
   business: BusinessWorkspace;
@@ -159,15 +160,17 @@ export const InventoryPanel: React.FC<InventoryPanelProps> = ({
 
   if (business.products.length === 0) {
     return (
-      <div data-tour="inventory-purchase-form" className="boho-card p-8 text-center space-y-2">
-        <Boxes className="w-8 h-8 text-[var(--accent-strong)] mx-auto" />
-        <h2 className="font-display text-xl font-bold text-[var(--text-primary)]">
-          Primero agrega productos en Costos y Catálogo
-        </h2>
-        <p className="text-xs text-[var(--text-secondary)] max-w-md mx-auto">
-          El módulo de inventario inteligente se conecta automáticamente con tus productos, compras
-          y ventas sin duplicar registros.
-        </p>
+      <div data-tour="inventory-purchase-form">
+        <SolidCard className="p-6 sm:p-8 text-center space-y-2">
+          <Boxes className="w-8 h-8 text-[var(--accent-strong)] mx-auto" />
+          <SectionTitle
+            align="center"
+            as="h2"
+            size="sm"
+            title="Primero agrega *productos* en Costos y Catálogo"
+            subtitle="El módulo de inventario inteligente se conecta automáticamente con tus productos, compras y ventas sin duplicar registros."
+          />
+        </SolidCard>
       </div>
     );
   }
@@ -178,83 +181,101 @@ export const InventoryPanel: React.FC<InventoryPanelProps> = ({
     <div className="space-y-6">
       {/* KPIs DE INVENTARIO */}
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-        <div className="rounded-[28px] p-5 bg-[var(--sec-soft)] border border-[var(--sec-border)]">
-          <p className="text-xs font-semibold text-[var(--sec-muted)]">
-            Valor total inventario actual
-          </p>
+        <SolidCard className="p-5">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-xs font-semibold text-[var(--text-secondary)]">
+              Valor total inventario actual
+            </p>
+            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-[var(--sec-soft)] text-[var(--sec-text)]">
+              Stock
+            </span>
+          </div>
           <p className="font-mono tabular-nums text-2xl font-bold text-[var(--text-primary)] mt-2">
             {summary.hasTrackedProducts
               ? formatCurrency(summary.totalCurrentValue, business.currency)
               : 'Sin activar'}
           </p>
-          <p className="text-[11px] text-[var(--sec-muted)] mt-1">
+          <p className="text-[11px] text-[var(--text-secondary)] mt-1">
             {summary.trackedCount} de {business.products.length} productos con control de stock
           </p>
-        </div>
+        </SolidCard>
 
-        <div className="rounded-[28px] p-5 bg-[var(--pos-soft)] border border-[var(--pos-border)]">
-          <p className="text-xs font-semibold text-[var(--pos-muted)]">
-            Rotación de inventario
-          </p>
+        <SolidCard className="p-5">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-xs font-semibold text-[var(--text-secondary)]">
+              Rotación de inventario
+            </p>
+            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-[var(--pos-soft)] text-[var(--pos-text)]">
+              Giro
+            </span>
+          </div>
           <p className="font-mono tabular-nums text-2xl font-bold text-[var(--pos-text)] mt-2">
             {summary.globalTurnoverRatio !== null
               ? `${summary.globalTurnoverRatio.toFixed(2)}x`
               : 'Datos insuficientes'}
           </p>
-          <p className="text-[11px] text-[var(--pos-muted)] mt-1">
+          <p className="text-[11px] text-[var(--text-secondary)] mt-1">
             Costo de ventas: {formatCurrency(summary.totalCostOfGoodsSold, business.currency)}
           </p>
-        </div>
+        </SolidCard>
 
-        <div className="rounded-[28px] p-5 bg-[var(--warn-soft)] border border-[var(--warn-border)]">
-          <p className="text-xs font-semibold text-[var(--warn-muted)]">
-            Alertas de reposición
-          </p>
+        <SolidCard className="p-5">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-xs font-semibold text-[var(--text-secondary)]">
+              Alertas de reposición
+            </p>
+            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-[var(--warn-soft)] text-[var(--warn-text)]">
+              Alerta
+            </span>
+          </div>
           <p className="font-mono tabular-nums text-2xl font-bold text-[var(--warn-text)] mt-2">
             {summary.outOfStockProducts.length + summary.lowStockProducts.length}
           </p>
-          <p className="text-[11px] text-[var(--warn-muted)] mt-1">
+          <p className="text-[11px] text-[var(--text-secondary)] mt-1">
             {summary.outOfStockProducts.length} agotado(s) · {summary.lowStockProducts.length} bajo
             mínimo
           </p>
-        </div>
+        </SolidCard>
 
-        <div className="rounded-[28px] p-5 bg-[var(--accent-soft)] border border-[var(--accent-soft-border)]">
-          <p className="text-xs font-semibold text-[var(--accent-soft-muted)]">
-            Baja rotación y mermas
-          </p>
+        <SolidCard className="p-5">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-xs font-semibold text-[var(--text-secondary)]">
+              Baja rotación y mermas
+            </p>
+            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-[var(--accent-soft)] text-[var(--accent-strong)]">
+              Mermas
+            </span>
+          </div>
           <p className="font-mono tabular-nums text-2xl font-bold text-[var(--text-primary)] mt-2">
             {summary.slowMovingProducts.length}
             <span className="text-xs font-normal text-[var(--text-secondary)] ml-1.5">
               lentos
             </span>
           </p>
-          <p className="text-[11px] text-[var(--accent-soft-muted)] mt-1">
+          <p className="text-[11px] text-[var(--text-secondary)] mt-1">
             Mermas/daños: {formatNumber(summary.totalDamageLossUnits)} u. (
             {formatCurrency(summary.totalDamageLossValue, business.currency)})
           </p>
-        </div>
+        </SolidCard>
       </div>
 
       {/* FORMULARIOS INTEGRADOS: COMPRA DE INVENTARIO Y AJUSTE/MERMA */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        <form
-          data-tour="inventory-purchase-form"
-          onSubmit={handlePurchaseSubmit}
-          className="lg:col-span-7 boho-card p-6 space-y-4"
-        >
-          <div className="flex items-center gap-2">
-            <PackageCheck className="w-5 h-5 text-[var(--pos-text)] shrink-0" />
-            <div>
-              <h2 className="font-display text-lg font-bold text-[var(--text-primary)]">
-                Registrar compra de inventario
-              </h2>
-              <p className="text-xs text-[var(--text-secondary)]">
-                Suma stock automáticamente y registra el pago al contado en caja o a crédito en
-                Cuentas por Pagar.
-              </p>
+        <SolidCard className="lg:col-span-7 p-5 sm:p-6">
+          <form
+            data-tour="inventory-purchase-form"
+            onSubmit={handlePurchaseSubmit}
+            className="space-y-4"
+          >
+            <div className="flex items-center gap-2">
+              <PackageCheck className="w-5 h-5 text-[var(--pos-text)] shrink-0" />
+              <SectionTitle
+                as="h2"
+                size="sm"
+                title="Registrar *compra* de inventario"
+                subtitle="Suma stock automáticamente y registra el pago al contado en caja o a crédito en Cuentas por Pagar."
+              />
             </div>
-          </div>
 
           {buyFeedback && (
             <p className="text-xs font-semibold p-3 rounded-2xl bg-[var(--pos-soft)] text-[var(--pos-text)]">
@@ -319,9 +340,14 @@ export const InventoryPanel: React.FC<InventoryPanelProps> = ({
             <button
               type="button"
               onClick={() => setBuyPaymentMode('cash')}
+              style={
+                buyPaymentMode === 'cash'
+                  ? { backgroundColor: 'var(--btn-navy-bg)', color: 'var(--btn-navy-text)' }
+                  : undefined
+              }
               className={`min-h-[42px] px-3 rounded-full border text-xs font-bold cursor-pointer transition-colors ${
                 buyPaymentMode === 'cash'
-                  ? 'bg-[var(--accent-btn)] text-[var(--accent-btn-text)] border-transparent shadow-xs'
+                  ? 'border-transparent shadow-xs'
                   : 'border-[var(--border-hairline)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
               }`}
             >
@@ -330,9 +356,14 @@ export const InventoryPanel: React.FC<InventoryPanelProps> = ({
             <button
               type="button"
               onClick={() => setBuyPaymentMode('credit')}
+              style={
+                buyPaymentMode === 'credit'
+                  ? { backgroundColor: 'var(--btn-navy-bg)', color: 'var(--btn-navy-text)' }
+                  : undefined
+              }
               className={`min-h-[42px] px-3 rounded-full border text-xs font-bold cursor-pointer transition-colors ${
                 buyPaymentMode === 'credit'
-                  ? 'bg-[var(--accent-btn)] text-[var(--accent-btn-text)] border-transparent shadow-xs'
+                  ? 'border-transparent shadow-xs'
                   : 'border-[var(--border-hairline)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
               }`}
             >
@@ -376,24 +407,25 @@ export const InventoryPanel: React.FC<InventoryPanelProps> = ({
 
           <button
             type="submit"
-            className="w-full min-h-[44px] rounded-full bg-[var(--accent-btn)] hover:bg-[var(--accent-btn-hover)] text-[var(--accent-btn-text)] text-xs font-bold inline-flex items-center justify-center gap-2 cursor-pointer shadow-sm transition-colors"
+            style={{ backgroundColor: 'var(--btn-navy-bg)', color: 'var(--btn-navy-text)' }}
+            className="w-full min-h-[44px] rounded-full text-xs font-bold inline-flex items-center justify-center gap-2 cursor-pointer shadow-sm hover:opacity-92 transition-opacity"
           >
             <Plus className="w-4 h-4" />
             <span>Registrar compra en inventario</span>
           </button>
         </form>
+        </SolidCard>
 
-        <form onSubmit={handleAdjustSubmit} className="lg:col-span-5 boho-card p-6 space-y-4">
+        <SolidCard className="lg:col-span-5 p-5 sm:p-6">
+        <form onSubmit={handleAdjustSubmit} className="space-y-4">
           <div className="flex items-center gap-2">
             <PackageMinus className="w-5 h-5 text-[var(--warn-text)] shrink-0" />
-            <div>
-              <h2 className="font-display text-lg font-bold text-[var(--text-primary)]">
-                Mermas, daños o ajuste manual
-              </h2>
-              <p className="text-xs text-[var(--text-secondary)]">
-                Registra pérdidas o diferencias de conteo físico sin afectar ventas.
-              </p>
-            </div>
+            <SectionTitle
+              as="h2"
+              size="sm"
+              title="Mermas, daños o *ajuste* manual"
+              subtitle="Registra pérdidas o diferencias de conteo físico sin afectar ventas."
+            />
           </div>
 
           {adjFeedback && (
@@ -473,22 +505,17 @@ export const InventoryPanel: React.FC<InventoryPanelProps> = ({
             <span>Guardar ajuste de stock</span>
           </button>
         </form>
+        </SolidCard>
       </div>
 
       {/* TABLA DETALLADA POR PRODUCTO */}
-      <section className="boho-card p-6 space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <h2 className="font-display text-lg font-bold text-[var(--text-primary)]">
-              Control de stock, valorización y rotación por producto
-            </h2>
-            <p className="text-xs text-[var(--text-secondary)]">
-              Activa el control en los productos físicos e ingresa su stock inicial y mínimo de
-              alerta. Las ventas reales y ventas a crédito vinculadas descuentan stock
-              automáticamente.
-            </p>
-          </div>
-        </div>
+      <SolidCard className="p-5 sm:p-6 space-y-4">
+        <SectionTitle
+          as="h2"
+          size="sm"
+          title="Control de *stock*, valorización y rotación"
+          subtitle="Activa el control en los productos físicos e ingresa su stock inicial y mínimo de alerta. Las ventas reales y a crédito descuentan stock automáticamente."
+        />
 
         <div className="overflow-x-auto">
           <table className="w-full text-xs text-left border-collapse min-w-[920px]">
@@ -656,11 +683,11 @@ export const InventoryPanel: React.FC<InventoryPanelProps> = ({
             </div>
           </div>
         )}
-      </section>
+      </SolidCard>
 
       {/* BITÁCORA DE MOVIMIENTOS */}
       {recentMovements.length > 0 && (
-        <section className="boho-card p-6 space-y-3">
+        <SolidCard className="p-5 sm:p-6 space-y-3">
           <h3 className="font-display text-base font-bold text-[var(--text-primary)]">
             Últimos movimientos de inventario ({recentMovements.length})
           </h3>
@@ -704,7 +731,7 @@ export const InventoryPanel: React.FC<InventoryPanelProps> = ({
               );
             })}
           </div>
-        </section>
+        </SolidCard>
       )}
     </div>
   );

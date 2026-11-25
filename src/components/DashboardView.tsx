@@ -11,6 +11,7 @@ import {
   CreditCard,
   Download,
   FileText,
+  HelpCircle,
   Layers,
   LayoutDashboard,
   Leaf,
@@ -31,6 +32,12 @@ import {
   getFixedCostsByCategory,
   getTotalFixedCostsForMonth,
 } from '../finance/formulas';
+import { calculateMarginOfSafetyAnalysis } from '../finance/phase1Insights';
+import {
+  calculateCashAlertAndRunway,
+  calculateFinancialRatiosWithStatus,
+  calculateOwnerSalaryImpact,
+} from '../finance/phase2Insights';
 import {
   calculateCashFlowProjection,
   calculateInventorySummary,
@@ -45,10 +52,19 @@ import { FinancialAnalystPanel } from './FinancialAnalystPanel';
 import {
   DoodleSproutMotif,
   EquilibrioProductIcon,
+  GrowyCharacterArtwork,
   GrowyDivider,
   GrowyEmptyStateIllustration,
 } from './GrowyMotifs';
 import { ChartCanvas } from './ChartCanvas';
+import {
+  AnalystMessage,
+  HeroBanner,
+  IncomeVsExpenseBarChart,
+  SectionTitle,
+  SolidCard,
+  StatRing,
+} from './design-system';
 import { AnimatedNumber, GROWY_EASE, StaggerItem, StaggerSection } from './MotionPrimitives';
 import { motion } from 'motion/react';
 
@@ -58,6 +74,7 @@ interface DashboardViewProps {
   business: BusinessWorkspace;
   isDark: boolean;
   colorTone: ColorTone;
+  userName?: string;
   onNavigate: (tab: ViewTab, subTab?: string) => void;
   initialSubTab?: DashboardSubTab;
 }
@@ -66,10 +83,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   business,
   isDark,
   colorTone,
+  userName,
   onNavigate,
   initialSubTab = 'overview',
 }) => {
   const [subTab, setSubTab] = useState<DashboardSubTab>(initialSubTab);
+  const [showSafetyTooltip, setShowSafetyTooltip] = useState(false);
 
   useEffect(() => {
     setSubTab(initialSubTab);
@@ -85,7 +104,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     const cf = calculateCashFlowProjection(business);
     const wc = calculateWorkingCapital(business, cf, ar, ap, inv);
     const analyst = generateFinancialAnalystReport(business);
-    return { ar, ap, inv, cf, wc, analyst };
+    const cashRunway = calculateCashAlertAndRunway(business);
+    const financialRatios = calculateFinancialRatiosWithStatus(business);
+    return { ar, ap, inv, cf, wc, analyst, cashRunway, financialRatios };
   }, [business]);
 
   // Si el mes actual está dentro de la proyección úsalo, si no el primero disponible
@@ -127,42 +148,47 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     [fixedNow, business.products, business.targetProfit, business.expectedMonthlyUnits]
   );
 
+  const ownerSalaryImpact = useMemo(
+    () => calculateOwnerSalaryImpact(business, activeProj?.month ?? currentMonth),
+    [business, activeProj, currentMonth]
+  );
+
   const fixedByCategory = useMemo(
     () => getFixedCostsByCategory(business.fixedCosts, activeProj?.month ?? currentMonth),
     [business.fixedCosts, activeProj, currentMonth]
   );
 
-  // Colores adaptados a modo claro/oscuro y tono visual para Chart.js
+  // Colores adaptados a modo claro/oscuro y tono visual ("Cálido editorial" / Ejecutivo)
   const palette = useMemo(() => {
     if (colorTone === 'formal') {
       return {
-        text: isDark ? '#F1F5F9' : '#0F172A',
-        muted: isDark ? '#94A3B8' : '#475569',
-        grid: isDark ? 'rgba(241, 245, 249, 0.08)' : 'rgba(15, 23, 42, 0.06)',
-        terracotta: isDark ? '#60A5FA' : '#1E3A5F',
-        terracottaFill: isDark ? 'rgba(96, 165, 250, 0.78)' : 'rgba(30, 58, 95, 0.85)',
-        sage: isDark ? '#34D399' : '#0F766E',
-        sageFill: isDark ? 'rgba(52, 211, 153, 0.8)' : 'rgba(15, 118, 110, 0.84)',
-        sageArea: isDark ? 'rgba(52, 211, 153, 0.16)' : 'rgba(15, 118, 110, 0.12)',
-        petrol: isDark ? '#CBD5E1' : '#475569',
-        ochre: isDark ? '#FBBF24' : '#B45309',
-        rose: isDark ? '#93C5FD' : '#2563EB',
-        sand: isDark ? '#64748B' : '#94A3B8',
+        text: isDark ? '#F1F5F9' : '#1F1B2E',
+        muted: isDark ? '#94A3B8' : '#5A5470',
+        grid: isDark ? 'rgba(241, 245, 249, 0.08)' : 'rgba(31, 27, 46, 0.06)',
+        terracotta: isDark ? '#93C5FD' : '#1F1B2E',
+        terracottaFill: isDark ? 'rgba(147, 197, 253, 0.8)' : 'rgba(31, 27, 46, 0.88)',
+        sage: isDark ? '#6FAE8A' : '#3F7A5C',
+        sageFill: isDark ? 'rgba(111, 174, 138, 0.85)' : 'rgba(63, 122, 92, 0.86)',
+        sageArea: isDark ? 'rgba(111, 174, 138, 0.16)' : 'rgba(63, 122, 92, 0.12)',
+        petrol: isDark ? '#CBD5E1' : '#5A5470',
+        ochre: isDark ? '#F3D27A' : '#B45309',
+        rose: isDark ? '#F6A59E' : '#B4474A',
+        sand: isDark ? '#64748B' : '#CFC5EE',
       };
     }
     return {
-      text: isDark ? '#F7F4F6' : '#1A1A1E',
-      muted: isDark ? '#B0AAB8' : '#6E6D7A',
-      grid: isDark ? 'rgba(247, 244, 246, 0.08)' : 'rgba(26, 26, 30, 0.06)',
-      terracotta: isDark ? '#F29EA0' : '#E57379',
-      terracottaFill: isDark ? 'rgba(242, 158, 160, 0.78)' : 'rgba(229, 115, 121, 0.82)',
-      sage: isDark ? '#5CC4B3' : '#1E7A6B',
-      sageFill: isDark ? 'rgba(92, 196, 179, 0.8)' : 'rgba(30, 122, 107, 0.82)',
-      sageArea: isDark ? 'rgba(92, 196, 179, 0.16)' : 'rgba(30, 122, 107, 0.12)',
-      petrol: isDark ? '#B1A3DC' : '#625296',
-      ochre: isDark ? '#F4A974' : '#E0864B',
-      rose: isDark ? '#D48C9C' : '#F2999B',
-      sand: isDark ? '#8C8594' : '#A9A2B0',
+      text: isDark ? '#FFF7F3' : '#1F1B2E',
+      muted: isDark ? '#CFC5EE' : '#5A5470',
+      grid: isDark ? 'rgba(255, 247, 243, 0.08)' : 'rgba(31, 27, 46, 0.06)',
+      terracotta: isDark ? '#F6A59E' : '#1F1B2E',
+      terracottaFill: isDark ? 'rgba(246, 165, 158, 0.82)' : 'rgba(31, 27, 46, 0.86)',
+      sage: isDark ? '#6FAE8A' : '#3F7A5C',
+      sageFill: isDark ? 'rgba(111, 174, 138, 0.84)' : 'rgba(63, 122, 92, 0.86)',
+      sageArea: isDark ? 'rgba(111, 174, 138, 0.18)' : 'rgba(63, 122, 92, 0.14)',
+      petrol: isDark ? '#CFC5EE' : '#CFC5EE',
+      ochre: isDark ? '#F3D27A' : '#E9B949',
+      rose: isDark ? '#F6A59E' : '#F6A59E',
+      sand: isDark ? '#8C8594' : '#BFE0CC',
     };
   }, [isDark, colorTone]);
 
@@ -386,9 +412,38 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       ? Math.min(100, (currentSalesMoney / analysis.targetRevenue) * 100)
       : 0;
 
+  const safetyAnalysis = useMemo(
+    () =>
+      calculateMarginOfSafetyAnalysis({
+        fixedCosts: fixedNow,
+        weightedUnitContribution: analysis.weightedEconomics.weightedUnitContribution,
+        weightedMarginPercent: analysis.weightedEconomics.weightedMarginPercent,
+        currentOrProjectedSales: currentSalesMoney,
+        breakEvenRevenue: analysis.breakEvenRevenue,
+        isActualSales: Boolean(activeComparison?.actual.hasData && activeComparison.actual.income > 0),
+        currency: business.currency,
+      }),
+    [
+      fixedNow,
+      analysis.weightedEconomics.weightedUnitContribution,
+      analysis.weightedEconomics.weightedMarginPercent,
+      currentSalesMoney,
+      analysis.breakEvenRevenue,
+      activeComparison?.actual.hasData,
+      activeComparison?.actual.income,
+      business.currency,
+    ]
+  );
+
   const priorityAlerts = smeMetrics.analyst.insights
     .filter((i) => i.severity === 'critical' || i.severity === 'warning')
     .slice(0, 3);
+
+  const firstName = useMemo(() => {
+    const clean = (userName ?? '').trim();
+    if (!clean) return 'Emprendedor';
+    return clean.split(/\s+/)[0] || 'Emprendedor';
+  }, [userName]);
 
   const subTabBar = (
     <div
@@ -401,13 +456,18 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         role="tab"
         aria-selected={subTab === 'overview'}
         onClick={() => setSubTab('overview')}
+        style={
+          subTab === 'overview'
+            ? { backgroundColor: 'var(--btn-navy-bg)', color: 'var(--btn-navy-text)' }
+            : undefined
+        }
         className={`min-h-[40px] px-4 py-1.5 rounded-full text-xs font-bold inline-flex items-center gap-2 transition-all cursor-pointer whitespace-nowrap shrink-0 ${
           subTab === 'overview'
-            ? 'bg-[var(--bg-surface)] text-[var(--text-primary)] shadow-xs'
+            ? 'shadow-xs'
             : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
         }`}
       >
-        <LayoutDashboard className="w-4 h-4 text-[var(--accent-strong)]" />
+        <LayoutDashboard className="w-4 h-4" />
         <span>Tablero ejecutivo</span>
       </button>
 
@@ -416,13 +476,18 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         role="tab"
         aria-selected={subTab === 'analyst'}
         onClick={() => setSubTab('analyst')}
+        style={
+          subTab === 'analyst'
+            ? { backgroundColor: 'var(--btn-navy-bg)', color: 'var(--btn-navy-text)' }
+            : undefined
+        }
         className={`min-h-[40px] px-4 py-1.5 rounded-full text-xs font-bold inline-flex items-center gap-2 transition-all cursor-pointer whitespace-nowrap shrink-0 ${
           subTab === 'analyst'
-            ? 'bg-[var(--bg-surface)] text-[var(--text-primary)] shadow-xs'
+            ? 'shadow-xs'
             : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
         }`}
       >
-        <Compass className="w-4 h-4 text-[var(--sec-text)]" />
+        <Compass className="w-4 h-4" />
         <span>
           Analista financiero PYME
           {priorityAlerts.length > 0 ? ` · ${priorityAlerts.length} alerta${priorityAlerts.length === 1 ? '' : 's'}` : ''}
@@ -458,28 +523,29 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           initial={{ opacity: 0, y: 14 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.42, ease: GROWY_EASE }}
-          className="boho-card p-6 sm:p-8 text-center max-w-2xl mx-auto mt-6"
+          className="max-w-2xl mx-auto mt-6"
         >
-          <div className="growy-hero-surface rounded-[24px] p-5 max-w-xs mx-auto mb-5">
-            <GrowyEmptyStateIllustration className="w-28 h-28 mx-auto" />
-          </div>
-          <h2 className="font-display text-2xl sm:text-3xl font-bold tracking-tight text-[var(--text-primary)]">
-            Comencemos a{' '}
-            <em className="font-editorial italic font-semibold text-[var(--accent-strong)]">
-              impulsar tus números
-            </em>
-          </h2>
-          <p className="text-sm text-[var(--text-secondary)] mt-2.5 leading-relaxed max-w-lg mx-auto">
-            Agrega al menos un producto o servicio y tus costos fijos mensuales para calcular tu punto
-            de equilibrio, proyecciones, flujo de caja y gráficos en vivo.
-          </p>
-          <button
-            type="button"
-            onClick={() => onNavigate('catalog', 'catalog')}
-            className="mt-6 inline-flex items-center justify-center min-h-[46px] px-7 py-2.5 rounded-full bg-[var(--accent-btn)] hover:bg-[var(--accent-btn-hover)] text-[var(--accent-btn-text)] text-sm font-bold transition-colors cursor-pointer shadow-sm"
-          >
-            Configurar costos y catálogo
-          </button>
+          <SolidCard className="p-6 sm:p-8 text-center">
+            <div className="growy-banner-surface relative overflow-hidden rounded-[28px] p-5 max-w-xs mx-auto mb-5">
+              <div className="growy-banner-grain" aria-hidden="true" />
+              <GrowyEmptyStateIllustration className="relative z-10 w-28 h-28 mx-auto" />
+            </div>
+            <SectionTitle
+              align="center"
+              as="h2"
+              size="md"
+              title="Comencemos a *impulsar* tus números"
+              subtitle="Agrega al menos un producto o servicio y tus costos fijos mensuales para calcular tu punto de equilibrio, proyecciones, flujo de caja y gráficos en vivo."
+            />
+            <button
+              type="button"
+              onClick={() => onNavigate('catalog', 'catalog')}
+              style={{ backgroundColor: 'var(--btn-navy-bg)', color: 'var(--btn-navy-text)' }}
+              className="mt-6 inline-flex items-center justify-center min-h-[46px] px-7 py-2.5 rounded-full text-sm font-bold hover:opacity-92 transition-opacity cursor-pointer shadow-sm"
+            >
+              Configurar costos y catálogo
+            </button>
+          </SolidCard>
         </motion.div>
       </div>
     );
@@ -488,208 +554,209 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   return (
     <StaggerSection className="space-y-6">
       {subTabBar}
-      {/* Encabezado limpio GROWy con acciones de exportación */}
+      {/* HeroBanner Cálido editorial con saludo, chips y barra de avance */}
       <StaggerItem>
-        <section data-tour="dashboard-overview" className="boho-card growy-hero-surface relative overflow-hidden p-6 sm:p-8">
-          <div
-            aria-hidden="true"
-            className="pointer-events-none absolute -right-14 -top-14 w-56 h-56 rounded-full bg-[var(--accent-soft)] opacity-80 growy-breathe"
+        <div data-tour="dashboard-overview">
+          <HeroBanner
+            headlineSize="greeting"
+            eyebrow={`${formatMonthLabel(activeProj?.month ?? currentMonth)} · ${business.name} · ${business.currency.code}`}
+            headline={`Hola, *${firstName}*`}
+            subtitle={
+              analysis.isViable
+                ? activeComparison?.actual.hasData
+                  ? activeComparison.interpretation
+                  : `Tu punto de equilibrio este mes es de ${formatNumber(analysis.breakEvenUnits)} ventas (${formatCurrency(analysis.breakEvenRevenue, business.currency)}). Con ${formatNumber(analysis.targetTotalUnits)} ventas cumples tu meta de ganancia.`
+                : 'Revisa tus costos variables y precios en Catálogo para que cada venta deje margen positivo.'
+            }
+            chips={[
+              {
+                id: 'simple',
+                label: 'Explícame *simple*',
+                onClick: () => onNavigate('simple'),
+                variant: 'lilac',
+              },
+              {
+                id: 'cashflow',
+                label: 'Flujo de *caja*',
+                onClick: () => onNavigate('projections', 'cashflow'),
+                variant: 'sage',
+              },
+              {
+                id: 'csv',
+                label: 'Exportar *CSV*',
+                onClick: () => exportBusinessToCSV(business),
+                variant: 'cream',
+              },
+              {
+                id: 'pdf',
+                label: 'Descargar *PDF*',
+                onClick: () => exportBusinessToPDF(business),
+                variant: 'navy',
+              },
+            ]}
+            rightSlot={
+              <div className="flex flex-col items-center gap-2.5">
+                <GrowyCharacterArtwork className="w-40 sm:w-44 lg:w-52 mx-auto block select-none" />
+                <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-white/75 border border-[var(--banner-ink)]/20 text-[11px] font-bold text-[#1F1B2E] shadow-xs">
+                  <EquilibrioProductIcon size="xs" />
+                  <span className="font-mono tabular-nums">
+                    Equilibrio: {formatNumber(analysis.breakEvenUnits)} u.
+                  </span>
+                </div>
+              </div>
+            }
+            bottomSlot={
+              <div className="pt-4 border-t border-[var(--banner-ink)]/15 space-y-2.5">
+                <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-semibold">
+                  <span className="text-[var(--banner-ink)]">
+                    {salesReferenceLabel}:{' '}
+                    <span className="font-mono tabular-nums font-bold">
+                      {formatCurrency(currentSalesMoney, business.currency)}
+                    </span>
+                  </span>
+                  <span className="text-[var(--banner-ink-muted)] font-mono tabular-nums">
+                    Equilibrio: {formatCurrency(analysis.breakEvenRevenue, business.currency)} (
+                    {breakEvenProgressPct.toFixed(0)}%) · Meta:{' '}
+                    {formatCurrency(analysis.targetRevenue, business.currency)}
+                  </span>
+                </div>
+
+                <div className="h-3.5 w-full rounded-full bg-white/60 overflow-hidden flex border border-[var(--banner-ink)]/15">
+                  <motion.div
+                    className="h-full bg-[#E9B949] origin-left"
+                    initial={{ scaleX: 0 }}
+                    animate={{ scaleX: 1 }}
+                    transition={{ duration: 0.65, ease: GROWY_EASE }}
+                    style={{
+                      width: `${Math.min(
+                        targetProgressPct,
+                        analysis.targetRevenue > 0
+                          ? (analysis.breakEvenRevenue / analysis.targetRevenue) * 100
+                          : 0
+                      )}%`,
+                    }}
+                    title="Cobertura de costos fijos"
+                  />
+                  {currentSalesMoney > analysis.breakEvenRevenue && analysis.targetRevenue > 0 && (
+                    <motion.div
+                      className="h-full bg-[#3F7A5C] origin-left"
+                      initial={{ scaleX: 0 }}
+                      animate={{ scaleX: 1 }}
+                      transition={{ duration: 0.72, delay: 0.12, ease: GROWY_EASE }}
+                      style={{
+                        width: `${Math.max(
+                          0,
+                          targetProgressPct -
+                            (analysis.breakEvenRevenue / analysis.targetRevenue) * 100
+                        )}%`,
+                      }}
+                      title="Zona de ganancia neta"
+                    />
+                  )}
+                </div>
+
+                <div className="flex flex-wrap items-center gap-5 text-xs font-medium text-[var(--banner-ink-muted)]">
+                  <span className="inline-flex items-center gap-1.5">
+                    <Sun className="w-3.5 h-3.5 text-[#7A5400]" />
+                    Primer tramo: cubre costos fijos
+                  </span>
+                  <span className="inline-flex items-center gap-1.5">
+                    <Leaf className="w-3.5 h-3.5 text-[#224A36]" />
+                    Segundo tramo: utilidad después del equilibrio
+                  </span>
+                </div>
+              </div>
+            }
           />
-
-        <div className="relative flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6">
-          <div className="max-w-2xl">
-            <div className="flex items-center gap-2.5">
-              <EquilibrioProductIcon size="xs" />
-              <p className="text-xs font-semibold text-[var(--text-secondary)] flex flex-wrap items-center gap-2">
-                <span>{formatMonthLabel(activeProj?.month ?? currentMonth)}</span>
-                <span aria-hidden="true">·</span>
-                <span>{business.name}</span>
-                <span aria-hidden="true">·</span>
-                <span>Moneda {business.currency.code}</span>
-              </p>
-            </div>
-            <h1 className="font-display text-2xl sm:text-3xl font-bold tracking-tight text-[var(--text-primary)] mt-2.5 text-balance">
-              {analysis.isViable ? (
-                <>
-                  Tu{' '}
-                  <em className="font-editorial italic font-semibold text-[var(--accent-strong)]">
-                    punto de equilibrio
-                  </em>{' '}
-                  se alcanza con {formatNumber(analysis.breakEvenUnits)} ventas
-                </>
-              ) : (
-                <>
-                  Revisa tus márgenes para alcanzar{' '}
-                  <em className="font-editorial italic font-semibold text-[var(--accent-strong)]">
-                    el equilibrio
-                  </em>
-                </>
-              )}
-            </h1>
-            <p className="text-sm text-[var(--text-secondary)] mt-2.5 leading-relaxed">
-              {activeComparison?.actual.hasData
-                ? activeComparison.interpretation
-                : `Necesitas ${formatCurrency(analysis.breakEvenRevenue, business.currency)} al mes para cubrir costos fijos, y ${formatNumber(analysis.targetTotalUnits)} ventas para lograr tu meta de ${formatCurrency(business.targetProfit, business.currency)} de ganancia.`}
-            </p>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2.5 shrink-0">
-            <button
-              type="button"
-              onClick={() => onNavigate('simple')}
-              className="inline-flex items-center gap-2 min-h-[44px] px-4 py-2 rounded-full border border-[var(--sec-border)] bg-[var(--bg-surface)] hover:bg-[var(--sec-soft)] text-xs sm:text-sm font-bold text-[var(--accent-strong)] transition-colors whitespace-nowrap shrink-0 cursor-pointer"
-            >
-              <Apple className="w-4 h-4 shrink-0" />
-              <span>Explícame en simple</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => exportBusinessToCSV(business)}
-              className="inline-flex items-center gap-2 min-h-[44px] px-4 py-2 rounded-full border border-[var(--border-hairline)] bg-[var(--bg-surface)] hover:bg-[var(--accent-soft)] text-sm font-semibold text-[var(--text-primary)] transition-colors whitespace-nowrap shrink-0 cursor-pointer"
-            >
-              <Download className="w-4 h-4 text-[var(--accent-strong)]" />
-              <span>Exportar CSV</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => exportBusinessToPDF(business)}
-              className="inline-flex items-center gap-2 min-h-[44px] px-5 py-2 rounded-full bg-[var(--accent-btn)] hover:bg-[var(--accent-btn-hover)] text-[var(--accent-btn-text)] text-sm font-bold transition-colors whitespace-nowrap shrink-0 cursor-pointer shadow-sm"
-            >
-              <FileText className="w-4 h-4" />
-              <span>Exportar PDF</span>
-            </button>
-          </div>
         </div>
-
-        {/* Barra de avance visual: zona equilibrio vs zona ganancia */}
-        <div className="relative mt-6 pt-5 border-t border-[var(--border-hairline)]">
-          <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-semibold mb-2">
-            <span className="text-[var(--text-primary)]">
-              {salesReferenceLabel}:{' '}
-              <span className="font-mono tabular-nums">
-                {formatCurrency(currentSalesMoney, business.currency)}
-              </span>
-            </span>
-            <span className="text-[var(--text-secondary)] font-mono tabular-nums">
-              Equilibrio: {formatCurrency(analysis.breakEvenRevenue, business.currency)} (
-              {breakEvenProgressPct.toFixed(0)}%) · Meta total:{' '}
-              {formatCurrency(analysis.targetRevenue, business.currency)}
-            </span>
-          </div>
-
-          <div className="h-3.5 w-full rounded-full bg-[var(--bg-track)] overflow-hidden flex">
-            <motion.div
-              className="h-full bg-[var(--warn-bar)] origin-left"
-              initial={{ scaleX: 0 }}
-              animate={{ scaleX: 1 }}
-              transition={{ duration: 0.65, ease: GROWY_EASE }}
-              style={{
-                width: `${Math.min(
-                  targetProgressPct,
-                  analysis.targetRevenue > 0
-                    ? (analysis.breakEvenRevenue / analysis.targetRevenue) * 100
-                    : 0
-                )}%`,
-              }}
-              title="Cobertura de costos fijos"
-            />
-            {currentSalesMoney > analysis.breakEvenRevenue && analysis.targetRevenue > 0 && (
-              <motion.div
-                className="h-full bg-[var(--pos-text)] origin-left"
-                initial={{ scaleX: 0 }}
-                animate={{ scaleX: 1 }}
-                transition={{ duration: 0.72, delay: 0.12, ease: GROWY_EASE }}
-                style={{
-                  width: `${Math.max(
-                    0,
-                    targetProgressPct -
-                      (analysis.breakEvenRevenue / analysis.targetRevenue) * 100
-                  )}%`,
-                }}
-                title="Zona de ganancia neta"
-              />
-            )}
-          </div>
-          <div className="flex flex-wrap items-center gap-5 mt-2.5 text-xs text-[var(--text-secondary)]">
-            <span className="inline-flex items-center gap-1.5">
-              <Sun className="w-3.5 h-3.5 text-[var(--warn-text)]" />
-              Primer tramo: cubre costos fijos
-            </span>
-            <span className="inline-flex items-center gap-1.5">
-              <Leaf className="w-3.5 h-3.5 text-[var(--pos-text)]" />
-              Segundo tramo: utilidad después del equilibrio
-            </span>
-          </div>
-        </div>
-        </section>
       </StaggerItem>
 
-      {/* 4 KPIs principales */}
+      {/* 4 KPIs principales en tarjetas sólidas editoriales */}
       <StaggerItem>
         <StaggerSection className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
           <StaggerItem>
-            <div className="rounded-[28px] p-5 bg-[var(--accent-soft)] border border-[var(--accent-soft-border)] boho-card-hover transition-transform duration-200 h-full">
-              <p className="text-xs font-semibold text-[var(--accent-soft-muted)]">
-                Punto de equilibrio mensual
-              </p>
-              <p className="font-mono tabular-nums text-2xl font-bold text-[var(--text-primary)] mt-2">
+            <SolidCard className="p-5 sm:p-6 boho-card-hover transition-transform duration-200 h-full">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs font-semibold text-[var(--text-secondary)]">
+                  Punto de equilibrio mensual
+                </p>
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-[var(--accent-soft)] text-[var(--accent-strong)]">
+                  Base
+                </span>
+              </div>
+              <p className="font-mono tabular-nums text-2xl font-bold text-[var(--text-primary)] mt-2.5">
                 <AnimatedNumber
                   value={analysis.breakEvenUnits}
                   format={(n) => `${formatNumber(Math.round(n))} u.`}
                 />
               </p>
-              <p className="text-xs text-[var(--accent-strong)] mt-1 font-mono tabular-nums font-medium">
+              <p className="text-xs text-[var(--accent-strong)] mt-1 font-mono tabular-nums font-semibold">
                 <AnimatedNumber
                   value={analysis.breakEvenRevenue}
                   format={(n) => `${formatCurrency(n, business.currency)} en ventas`}
                 />
               </p>
-            </div>
+            </SolidCard>
           </StaggerItem>
 
           <StaggerItem>
-            <div className="rounded-[28px] p-5 bg-[var(--sec-soft)] border border-[var(--sec-border)] boho-card-hover transition-transform duration-200 h-full">
-              <p className="text-xs font-semibold text-[var(--sec-muted)]">
-                Meta para ganar {formatCurrency(business.targetProfit, business.currency)}
-              </p>
-              <p className="font-mono tabular-nums text-2xl font-bold text-[var(--sec-text)] mt-2">
+            <SolidCard className="p-5 sm:p-6 boho-card-hover transition-transform duration-200 h-full">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs font-semibold text-[var(--text-secondary)]">
+                  Meta ({formatCurrency(business.targetProfit, business.currency)})
+                </p>
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-[var(--sec-soft)] text-[var(--sec-text)]">
+                  Meta
+                </span>
+              </div>
+              <p className="font-mono tabular-nums text-2xl font-bold text-[var(--text-primary)] mt-2.5">
                 <AnimatedNumber
                   value={analysis.targetTotalUnits}
                   format={(n) => `${formatNumber(Math.round(n))} u.`}
                 />
               </p>
-              <p className="text-xs text-[var(--sec-muted)] mt-1 font-mono tabular-nums">
+              <p className="text-xs text-[var(--text-secondary)] mt-1 font-mono tabular-nums">
                 {formatNumber(analysis.profitZoneUnits)} u. sobre el equilibrio
               </p>
-            </div>
+            </SolidCard>
           </StaggerItem>
 
           <StaggerItem>
-            <div className="rounded-[28px] p-5 bg-[var(--pos-soft)] border border-[var(--pos-border)] boho-card-hover transition-transform duration-200 h-full">
-              <p className="text-xs font-semibold text-[var(--pos-muted)]">
-                Utilidad proyectada ({activeProj?.monthLabel})
-              </p>
-              <p className="font-mono tabular-nums text-2xl font-bold text-[var(--pos-text)] mt-2">
+            <SolidCard className="p-5 sm:p-6 boho-card-hover transition-transform duration-200 h-full">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs font-semibold text-[var(--text-secondary)]">
+                  Utilidad proyectada ({activeProj?.monthLabel})
+                </p>
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-[var(--pos-soft)] text-[var(--pos-text)]">
+                  Proy.
+                </span>
+              </div>
+              <p className="font-mono tabular-nums text-2xl font-bold text-[var(--pos-text)] mt-2.5">
                 <AnimatedNumber
                   value={activeProj?.projectedProfit ?? 0}
                   format={(n) => formatCurrency(n, business.currency)}
                 />
               </p>
-              <p className="text-xs text-[var(--pos-muted)] mt-1 font-mono tabular-nums">
+              <p className="text-xs text-[var(--text-secondary)] mt-1 font-mono tabular-nums">
                 Costos fijos: {formatCurrency(fixedNow, business.currency)}
               </p>
-            </div>
+            </SolidCard>
           </StaggerItem>
 
           <StaggerItem>
-            <div className="rounded-[28px] p-5 bg-[var(--warn-soft)] border border-[var(--warn-border)] boho-card-hover transition-transform duration-200 h-full">
-              <p className="text-xs font-semibold text-[var(--warn-muted)]">
-                Utilidad real vs. proyectada
-              </p>
+            <SolidCard className="p-5 sm:p-6 boho-card-hover transition-transform duration-200 h-full">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs font-semibold text-[var(--text-secondary)]">
+                  Utilidad real vs. proyectada
+                </p>
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-[var(--warn-soft)] text-[var(--warn-text)]">
+                  Real
+                </span>
+              </div>
               {activeComparison?.actual.hasData ? (
                 <>
                   <p
-                    className={`font-mono tabular-nums text-2xl font-bold mt-2 ${
+                    className={`font-mono tabular-nums text-2xl font-bold mt-2.5 ${
                       activeComparison.actual.profit >= 0
                         ? 'text-[var(--pos-text)]'
                         : 'text-[var(--danger-text)]'
@@ -700,7 +767,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                       format={(n) => formatCurrency(n, business.currency)}
                     />
                   </p>
-                  <p className="text-xs mt-1 inline-flex items-center gap-1 font-medium text-[var(--warn-muted)]">
+                  <p className="text-xs mt-1 inline-flex items-center gap-1 font-medium text-[var(--text-secondary)]">
                     {activeComparison.profitDiffMoney >= 0 ? (
                       <ArrowUpRight className="w-3.5 h-3.5 text-[var(--pos-text)]" />
                     ) : (
@@ -715,7 +782,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 </>
               ) : (
                 <>
-                  <p className="text-lg font-bold text-[var(--warn-text)] mt-2">
+                  <p className="text-lg font-bold text-[var(--text-primary)] mt-2.5">
                     Sin registro real
                   </p>
                   <button
@@ -727,41 +794,234 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   </button>
                 </>
               )}
-            </div>
+            </SolidCard>
           </StaggerItem>
         </StaggerSection>
       </StaggerItem>
 
-      {/* RESUMEN TESORERÍA E INTELIGENCIA PYME CON ACCESO AL DETALLE */}
+      {/* MARGEN DE CONTRIBUCIÓN Y MARGEN DE SEGURIDAD (StatRing + SolidCard) */}
       <StaggerItem>
-        <section className="boho-card p-5 sm:p-6 space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-3">
-              <DoodleSproutMotif className="w-8 h-8 shrink-0 hidden sm:block" />
-              <div>
-                <h2 className="font-display text-lg font-bold tracking-tight text-[var(--text-primary)]">
-                  Salud financiera PYME · Liquidez y obligaciones
-                </h2>
-                <p className="text-xs text-[var(--text-secondary)]">
-                  Haz clic en cualquier indicador para ir directo a su detalle operativo.
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-stretch">
+          <div className="lg:col-span-4">
+            <StatRing
+              title="Margen de *seguridad*"
+              percentage={
+                safetyAnalysis.hasSalesReference
+                  ? Math.max(0, Math.min(100, safetyAnalysis.marginOfSafetyPercent))
+                  : 0
+              }
+              centerLabel={
+                safetyAnalysis.hasSalesReference
+                  ? `${safetyAnalysis.marginOfSafetyPercent.toFixed(1)}%`
+                  : '—'
+              }
+              status={
+                safetyAnalysis.status === 'verde'
+                  ? 'green'
+                  : safetyAnalysis.status === 'amarillo'
+                    ? 'amber'
+                    : 'red'
+              }
+              statusLabel={`${
+                safetyAnalysis.status === 'verde'
+                  ? 'Verde'
+                  : safetyAnalysis.status === 'amarillo'
+                    ? 'Amarillo'
+                    : 'Rojo'
+              } · ${safetyAnalysis.statusLabel}`}
+              subtitle={
+                safetyAnalysis.isActualSales
+                  ? 'Calculado con ventas reales del mes'
+                  : 'Calculado con ventas proyectadas'
+              }
+              metrics={[
+                {
+                  label: 'Colchón en ventas',
+                  value: formatCurrency(safetyAnalysis.marginOfSafetyMoney, business.currency),
+                },
+                {
+                  label: 'Umbral saludable',
+                  value: '>= 25% verde',
+                },
+              ]}
+              className="h-full"
+            />
+          </div>
+
+          <SolidCard className="lg:col-span-8 p-5 sm:p-6 flex flex-col justify-between space-y-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <SectionTitle
+                    as="h2"
+                    size="sm"
+                    title="Margen de *contribución* y colchón"
+                    subtitle={`Cuánto queda libre por venta (${safetyAnalysis.isActualSales ? 'ventas reales' : 'ventas proyectadas'}).`}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowSafetyTooltip((prev) => !prev)}
+                    aria-label="¿Qué significa el margen de seguridad?"
+                    aria-expanded={showSafetyTooltip}
+                    className="text-[var(--sec-text)] hover:opacity-80 cursor-pointer shrink-0"
+                  >
+                    <HelpCircle className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => onNavigate('simple')}
+                className="inline-flex items-center gap-1.5 min-h-[36px] px-4 rounded-full border border-[var(--sec-border)] bg-[var(--bg-soft-alt)] hover:bg-[var(--sec-soft)] text-xs font-semibold text-[var(--sec-text)] cursor-pointer transition-colors"
+              >
+                <Apple className="w-3.5 h-3.5" />
+                <span>Ver en Explícame simple</span>
+              </button>
+            </div>
+
+            {showSafetyTooltip && (
+              <div className="p-3.5 rounded-[22px] bg-[var(--sec-soft)] border border-[var(--sec-border)] text-xs text-[var(--text-primary)] leading-relaxed">
+                {safetyAnalysis.tooltipText}
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+              <div className="p-4 rounded-[24px] bg-[var(--bg-soft-alt)] border border-[var(--border-hairline)]">
+                <p className="text-[11px] font-semibold text-[var(--text-secondary)]">
+                  Margen de contribución promedio
+                </p>
+                <p className="font-mono tabular-nums text-xl font-bold text-[var(--text-primary)] mt-1">
+                  {formatCurrency(safetyAnalysis.weightedUnitContribution, business.currency)}{' '}
+                  <span className="text-xs font-semibold text-[var(--pos-text)]">
+                    ({formatPercent(safetyAnalysis.weightedMarginPercent)})
+                  </span>
+                </p>
+                <p className="text-[11px] text-[var(--text-secondary)] mt-0.5">
+                  Aporte libre promedio por cada unidad vendida
+                </p>
+              </div>
+
+              <div className="p-4 rounded-[24px] bg-[var(--bg-soft-alt)] border border-[var(--border-hairline)]">
+                <p className="text-[11px] font-semibold text-[var(--text-secondary)]">
+                  Margen de contribución total del mes
+                </p>
+                <p className="font-mono tabular-nums text-xl font-bold text-[var(--text-primary)] mt-1">
+                  {formatCurrency(safetyAnalysis.totalContributionMargin, business.currency)}
+                </p>
+                <p className="text-[11px] text-[var(--text-secondary)] mt-0.5">
+                  Para cubrir {formatCurrency(fixedNow, business.currency)} de costos fijos
                 </p>
               </div>
             </div>
-            <button
-              type="button"
-              onClick={() => setSubTab('analyst')}
-              className="inline-flex items-center gap-1.5 text-xs font-bold text-[var(--accent-strong)] bg-[var(--accent-soft)] hover:opacity-90 border border-[var(--accent-soft-border)] rounded-full px-4 py-2 transition-opacity cursor-pointer min-h-[38px]"
-            >
-              <span>Abrir Analista Financiero PYME</span>
-              <ArrowRight className="w-3.5 h-3.5" />
-            </button>
+
+            <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
+              <strong className="text-[var(--text-primary)]">En simple:</strong>{' '}
+              {safetyAnalysis.simpleExplanation}
+            </p>
+          </SolidCard>
+        </div>
+      </StaggerItem>
+
+      {/* AVISOS DEL ANALISTA PYME (estilo publicación AnalystMessage) */}
+      <StaggerItem>
+        <div className="space-y-3">
+          <SectionTitle
+            as="h2"
+            size="sm"
+            title="Lo *más* reciente de tu Analista PYME"
+            subtitle="Lectura directa sobre caja, liquidez y obligaciones basada solo en tus datos."
+            rightSlot={
+              <button
+                type="button"
+                onClick={() => setSubTab('analyst')}
+                style={{ backgroundColor: 'var(--btn-navy-bg)', color: 'var(--btn-navy-text)' }}
+                className="inline-flex items-center gap-1.5 text-xs font-bold rounded-full px-4 py-2 min-h-[38px] hover:opacity-92 transition-opacity cursor-pointer"
+              >
+                <span>Abrir Analista PYME</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+            }
+          />
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <AnalystMessage
+              authorName="Analista PYME"
+              initials="AP"
+              timestamp={formatMonthLabel(activeProj?.month ?? currentMonth)}
+              category={
+                smeMetrics.cashRunway.runwayMonths !== null
+                  ? `Caja · ${smeMetrics.cashRunway.runwayMonths.toFixed(1)} meses`
+                  : 'Caja y liquidez'
+              }
+              tone={
+                smeMetrics.cashRunway.status === 'rojo'
+                  ? 'coral'
+                  : smeMetrics.cashRunway.status === 'amarillo'
+                    ? 'gold'
+                    : 'sage'
+              }
+              message={`${smeMetrics.cashRunway.headline}. ${smeMetrics.cashRunway.simpleExplanation}`}
+              detailLabel="Ver Flujo de Caja"
+              onViewDetail={() => onNavigate('projections', 'cashflow')}
+              onExplainSimple={() => onNavigate('simple')}
+            />
+
+            {priorityAlerts.length > 0 ? (
+              <AnalystMessage
+                authorName="Analista PYME"
+                initials="AP"
+                timestamp="Alerta prioritaria"
+                category={priorityAlerts[0].areaLabel}
+                tone={priorityAlerts[0].severity === 'critical' ? 'coral' : 'gold'}
+                message={`${priorityAlerts[0].title}. ${priorityAlerts[0].recommendation}`}
+                detailLabel="Ver detalle"
+                onViewDetail={() => setSubTab('analyst')}
+                onExplainSimple={() => onNavigate('simple')}
+              />
+            ) : (
+              <AnalystMessage
+                authorName="Analista PYME"
+                initials="AP"
+                timestamp="Al día"
+                category="Salud general"
+                tone="lilac"
+                message={
+                  ownerSalaryImpact.hasIllusoryProfitRisk
+                    ? 'Aún no incluyes el sueldo del dueño como costo fijo: puedes estar viendo una utilidad ilusoria si no descuentas tus horas.'
+                    : `Tu estructura considera ${formatCurrency(ownerSalaryImpact.activeSalaryApplied, business.currency)}/mes de sueldo del dueño y equilibrio de ${formatNumber(ownerSalaryImpact.adjustedBreakEvenUnits)} u.`
+                }
+                detailLabel={
+                  ownerSalaryImpact.hasIllusoryProfitRisk ? 'Configurar sueldo' : 'Ajustar sueldo'
+                }
+                onViewDetail={() => onNavigate('settings')}
+                onExplainSimple={() => onNavigate('simple')}
+              />
+            )}
+          </div>
+        </div>
+      </StaggerItem>
+
+      {/* RESUMEN TESORERÍA E INTELIGENCIA PYME CON ACCESO AL DETALLE */}
+      <StaggerItem>
+        <SolidCard className="p-5 sm:p-6 space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <DoodleSproutMotif className="w-8 h-8 shrink-0 hidden sm:block" />
+              <SectionTitle
+                as="h2"
+                size="sm"
+                title="Liquidez, *cobros* y razones simples"
+                subtitle="Haz clic en cualquier indicador para ir directo a su detalle operativo."
+              />
+            </div>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">
             <button
               type="button"
               onClick={() => onNavigate('projections', 'cashflow')}
-              className="text-left p-4 rounded-[22px] bg-[var(--bg-soft-alt)] border border-[var(--border-hairline)] hover:border-[var(--accent-strong)] transition-colors cursor-pointer"
+              className="text-left p-4 rounded-[24px] bg-[var(--bg-soft-alt)] border border-[var(--border-hairline)] hover:border-[var(--accent-strong)] transition-colors cursor-pointer"
             >
               <p className="text-[11px] font-semibold text-[var(--text-secondary)] inline-flex items-center gap-1">
                 <Banknote className="w-3.5 h-3.5 text-[var(--pos-text)]" />
@@ -786,7 +1046,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <button
               type="button"
               onClick={() => onNavigate('projections', 'cashflow')}
-              className="text-left p-4 rounded-[22px] bg-[var(--bg-soft-alt)] border border-[var(--border-hairline)] hover:border-[var(--accent-strong)] transition-colors cursor-pointer"
+              className="text-left p-4 rounded-[24px] bg-[var(--bg-soft-alt)] border border-[var(--border-hairline)] hover:border-[var(--accent-strong)] transition-colors cursor-pointer"
             >
               <p className="text-[11px] font-semibold text-[var(--text-secondary)] inline-flex items-center gap-1">
                 <TrendingUp className="w-3.5 h-3.5 text-[var(--sec-text)]" />
@@ -817,7 +1077,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <button
               type="button"
               onClick={() => onNavigate('projections', 'cashflow')}
-              className="text-left p-4 rounded-[22px] bg-[var(--bg-soft-alt)] border border-[var(--border-hairline)] hover:border-[var(--accent-strong)] transition-colors cursor-pointer"
+              className="text-left p-4 rounded-[24px] bg-[var(--bg-soft-alt)] border border-[var(--border-hairline)] hover:border-[var(--accent-strong)] transition-colors cursor-pointer"
             >
               <p className="text-[11px] font-semibold text-[var(--text-secondary)] inline-flex items-center gap-1">
                 <Layers className="w-3.5 h-3.5 text-[var(--sec-text)]" />
@@ -846,7 +1106,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <button
               type="button"
               onClick={() => onNavigate('actuals', 'receivables')}
-              className="text-left p-4 rounded-[22px] bg-[var(--bg-soft-alt)] border border-[var(--border-hairline)] hover:border-[var(--accent-strong)] transition-colors cursor-pointer"
+              className="text-left p-4 rounded-[24px] bg-[var(--bg-soft-alt)] border border-[var(--border-hairline)] hover:border-[var(--accent-strong)] transition-colors cursor-pointer"
             >
               <p className="text-[11px] font-semibold text-[var(--text-secondary)]">
                 Cuentas por cobrar
@@ -870,7 +1130,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <button
               type="button"
               onClick={() => onNavigate('actuals', 'payables')}
-              className="text-left p-4 rounded-[22px] bg-[var(--bg-soft-alt)] border border-[var(--border-hairline)] hover:border-[var(--accent-strong)] transition-colors cursor-pointer"
+              className="text-left p-4 rounded-[24px] bg-[var(--bg-soft-alt)] border border-[var(--border-hairline)] hover:border-[var(--accent-strong)] transition-colors cursor-pointer"
             >
               <p className="text-[11px] font-semibold text-[var(--text-secondary)] inline-flex items-center gap-1">
                 <CreditCard className="w-3.5 h-3.5 text-[var(--warn-text)]" />
@@ -895,7 +1155,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <button
               type="button"
               onClick={() => onNavigate('catalog', 'inventory')}
-              className="text-left p-4 rounded-[22px] bg-[var(--bg-soft-alt)] border border-[var(--border-hairline)] hover:border-[var(--accent-strong)] transition-colors cursor-pointer"
+              className="text-left p-4 rounded-[24px] bg-[var(--bg-soft-alt)] border border-[var(--border-hairline)] hover:border-[var(--accent-strong)] transition-colors cursor-pointer"
             >
               <p className="text-[11px] font-semibold text-[var(--text-secondary)] inline-flex items-center gap-1">
                 <Boxes className="w-3.5 h-3.5 text-[var(--accent-strong)]" />
@@ -921,33 +1181,106 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </button>
           </div>
 
-          {priorityAlerts.length > 0 && (
-            <div className="pt-2 border-t border-[var(--border-hairline)] flex flex-col gap-2">
-              {priorityAlerts.map((alert) => (
+          {/* 2.3 Razones financieras simples con semáforo */}
+          <div className="pt-3 border-t border-[var(--border-hairline)] space-y-2.5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-xs font-bold text-[var(--text-primary)]">
+                Razones financieras simples (liquidez y stock)
+              </p>
+              <button
+                type="button"
+                onClick={() => onNavigate('simple')}
+                className="text-[11px] font-bold text-[var(--sec-text)] hover:underline cursor-pointer"
+              >
+                Ver explicación con peras y manzanas →
+              </button>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              {smeMetrics.financialRatios.ratios.map((ratio) => (
                 <div
-                  key={alert.id}
-                  className={`px-3.5 py-2.5 rounded-xl text-xs flex flex-wrap items-center justify-between gap-2 ${
-                    alert.severity === 'critical'
-                      ? 'bg-[var(--danger-soft)] text-[var(--danger-text)]'
-                      : 'bg-[var(--warn-soft)] text-[var(--warn-text)]'
-                  }`}
+                  key={ratio.id}
+                  className="p-3.5 rounded-[22px] bg-[var(--bg-soft-alt)] border border-[var(--border-hairline)] space-y-1.5"
                 >
-                  <span className="inline-flex items-center gap-2 font-semibold">
-                    <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-                    <span>{alert.title}</span>
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setSubTab('analyst')}
-                    className="font-bold underline underline-offset-4 cursor-pointer"
-                  >
-                    Ver recomendación
-                  </button>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[11px] font-bold text-[var(--text-primary)]">
+                      {ratio.name}
+                    </span>
+                    <span
+                      className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
+                        ratio.status === 'verde'
+                          ? 'bg-[var(--pos-soft)] text-[var(--pos-text)]'
+                          : ratio.status === 'amarillo'
+                            ? 'bg-[var(--warn-soft)] text-[var(--warn-text)]'
+                            : ratio.status === 'rojo'
+                              ? 'bg-[var(--danger-soft)] text-[var(--danger-text)]'
+                              : 'bg-[var(--bg-soft)] text-[var(--text-secondary)]'
+                      }`}
+                    >
+                      <span
+                        aria-hidden="true"
+                        className={`w-1.5 h-1.5 rounded-full ${
+                          ratio.status === 'verde'
+                            ? 'bg-[var(--pos-dot)]'
+                            : ratio.status === 'amarillo'
+                              ? 'bg-[var(--warn-text)]'
+                              : ratio.status === 'rojo'
+                                ? 'bg-[var(--danger-text)]'
+                                : 'bg-[var(--text-secondary)]'
+                        }`}
+                      />
+                      <span>{ratio.statusLabel}</span>
+                    </span>
+                  </div>
+                  <p className="font-mono tabular-nums text-lg font-bold text-[var(--text-primary)]">
+                    {ratio.formattedValue}
+                  </p>
+                  <p className="text-[11px] text-[var(--text-secondary)] leading-relaxed">
+                    {ratio.liveExample}
+                  </p>
                 </div>
               ))}
             </div>
-          )}
-        </section>
+          </div>
+
+          {/* 2.5 Sueldo del dueño / aviso de utilidad ilusoria */}
+          <div
+            className={`px-4 py-3 rounded-[22px] border text-xs flex flex-wrap items-center justify-between gap-2 ${
+              ownerSalaryImpact.hasIllusoryProfitRisk
+                ? 'bg-[var(--warn-soft)] border-[var(--warn-border)] text-[var(--warn-text)]'
+                : 'bg-[var(--sec-soft)] border-[var(--sec-border)] text-[var(--sec-text)]'
+            }`}
+          >
+            <div className="flex items-start gap-2 min-w-0 flex-1">
+              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+              <p className="leading-relaxed">
+                {ownerSalaryImpact.hasIllusoryProfitRisk ? (
+                  <>
+                    <strong>Sueldo del dueño no incluido:</strong> puedes estar viendo una{' '}
+                    <strong>utilidad ilusoria</strong> (parte de la ganancia paga tus propias horas).
+                  </>
+                ) : (
+                  <>
+                    <strong>Sueldo del dueño activo:</strong> considerando{' '}
+                    <span className="font-mono font-bold">
+                      {formatCurrency(ownerSalaryImpact.activeSalaryApplied, business.currency)}
+                    </span>
+                    /mes de referencia, tu equilibrio real sube a{' '}
+                    <span className="font-mono font-bold">
+                      {formatNumber(ownerSalaryImpact.adjustedBreakEvenUnits)} u.
+                    </span>
+                  </>
+                )}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => onNavigate('settings')}
+              className="font-bold underline underline-offset-4 cursor-pointer shrink-0"
+            >
+              {ownerSalaryImpact.hasIllusoryProfitRisk ? 'Configurar mi sueldo' : 'Ajustar sueldo'}
+            </button>
+          </div>
+        </SolidCard>
       </StaggerItem>
 
       <StaggerItem>
@@ -958,16 +1291,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       <StaggerItem>
         <StaggerSection className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <StaggerItem>
-            <div className="boho-card boho-card-hover p-6 h-full">
+            <SolidCard className="p-5 sm:p-6 boho-card-hover h-full">
               <div className="flex items-center justify-between gap-2 mb-4">
-                <div>
-                  <h2 className="font-display text-lg font-bold text-[var(--text-primary)]">
-                    Gráfico de Punto de Equilibrio
-                  </h2>
-                  <p className="text-xs text-[var(--text-secondary)]">
-                    Donde se cruzan ingresos totales y costos totales nace tu utilidad
-                  </p>
-                </div>
+                <SectionTitle
+                  as="h2"
+                  size="sm"
+                  title="Gráfico de *punto de equilibrio*"
+                  subtitle="Donde se cruzan ingresos totales y costos totales nace tu utilidad."
+                />
                 <TrendingUp className="w-5 h-5 text-[var(--accent-strong)] shrink-0" />
               </div>
               <ChartCanvas
@@ -975,61 +1306,78 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 heightClass="h-72"
                 ariaLabel="Gráfico de líneas de punto de equilibrio"
               />
-            </div>
+            </SolidCard>
           </StaggerItem>
 
           <StaggerItem>
-            <div className="boho-card boho-card-hover p-6 h-full">
-              <div className="mb-4">
-                <h2 className="font-display text-lg font-bold text-[var(--text-primary)]">
-                  Ingresos vs. Egresos por mes
-                </h2>
-                <p className="text-xs text-[var(--text-secondary)]">
-                  Comparativa mensual de 12 meses frente a tus registros reales
-                </p>
-              </div>
-              <ChartCanvas
-                config={incomeVsExpenseConfig}
-                heightClass="h-72"
-                ariaLabel="Gráfico de barras de ingresos versus egresos mensuales"
+            {business.currency.code === 'CLP' ? (
+              <IncomeVsExpenseBarChart
+                title="Ingresos *vs* egresos por mes"
+                themeKey={`${colorTone}-${isDark}`}
+                data={comparisons.slice(0, 12).map((c) => ({
+                  label: c.projected.monthLabel,
+                  income: Math.round(
+                    c.actual.hasData ? c.actual.income : c.projected.projectedRevenue
+                  ),
+                  expense: Math.round(
+                    c.actual.hasData ? c.actual.totalExpense : c.projected.projectedTotalCosts
+                  ),
+                }))}
+                className="h-full"
               />
-            </div>
+            ) : (
+              <SolidCard className="p-5 sm:p-6 boho-card-hover h-full">
+                <div className="mb-4">
+                  <SectionTitle
+                    as="h2"
+                    size="sm"
+                    title="Ingresos *vs* egresos por mes"
+                    subtitle="Comparativa mensual de 12 meses frente a tus registros reales."
+                  />
+                </div>
+                <ChartCanvas
+                  config={incomeVsExpenseConfig}
+                  heightClass="h-72"
+                  ariaLabel="Gráfico de barras de ingresos versus egresos mensuales"
+                />
+              </SolidCard>
+            )}
           </StaggerItem>
 
           <StaggerItem>
-            <div className="boho-card boho-card-hover p-6 h-full">
+            <SolidCard className="p-5 sm:p-6 boho-card-hover h-full">
               <div className="mb-4">
-                <h2 className="font-display text-lg font-bold text-[var(--text-primary)]">
-                  Evolución de la Utilidad
-                </h2>
-                <p className="text-xs text-[var(--text-secondary)]">
-                  Trayectoria de ganancia proyectada frente a resultados reales
-                </p>
+                <SectionTitle
+                  as="h2"
+                  size="sm"
+                  title="Evolución de la *utilidad*"
+                  subtitle="Trayectoria de ganancia proyectada frente a resultados reales."
+                />
               </div>
               <ChartCanvas
                 config={profitEvolutionConfig}
                 heightClass="h-72"
                 ariaLabel="Gráfico de evolución de utilidad mensual"
               />
-            </div>
+            </SolidCard>
           </StaggerItem>
 
           <StaggerItem>
-            <div className="boho-card boho-card-hover p-6 h-full">
+            <SolidCard className="p-5 sm:p-6 boho-card-hover h-full">
               <div className="mb-4">
-                <h2 className="font-display text-lg font-bold text-[var(--text-primary)]">
-                  Composición de Costos
-                </h2>
-                <p className="text-xs text-[var(--text-secondary)]">
-                  Distribución de costos fijos por categoría y costos variables del mes
-                </p>
+                <SectionTitle
+                  as="h2"
+                  size="sm"
+                  title="Composición de *costos*"
+                  subtitle="Distribución de costos fijos por categoría y costos variables del mes."
+                />
               </div>
               <ChartCanvas
                 config={costCompositionConfig}
                 heightClass="h-72"
                 ariaLabel="Gráfico circular de composición de costos"
               />
-            </div>
+            </SolidCard>
           </StaggerItem>
         </StaggerSection>
       </StaggerItem>

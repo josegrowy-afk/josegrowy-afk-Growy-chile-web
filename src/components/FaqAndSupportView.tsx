@@ -17,6 +17,7 @@ import {
 } from '../utils/attachments';
 import { InstallAppGuideSection } from './InstallAppGuideSection';
 import { GROWY_EASE } from './MotionPrimitives';
+import { SectionTitle, SolidCard } from './design-system';
 
 interface FaqAndSupportViewProps {
   faqs: FaqItem[];
@@ -129,17 +130,15 @@ export const FaqAndSupportView: React.FC<FaqAndSupportViewProps> = ({
   return (
     <div className="space-y-8">
       <header className="flex flex-col md:flex-row md:items-end justify-between gap-4">
-        <div>
+        <div className="space-y-1">
           <p className="text-xs font-semibold text-[var(--text-secondary)]">
             Centro de ayuda · Fórmulas, cuenta y soporte
           </p>
-          <h1 className="font-display text-2xl sm:text-3xl font-bold tracking-tight text-[var(--text-primary)] mt-1">
-            Preguntas{' '}
-            <em className="font-editorial italic font-semibold text-[var(--accent-strong)]">
-              frecuentes
-            </em>{' '}
-            y soporte
-          </h1>
+          <SectionTitle
+            as="h1"
+            size="md"
+            title="Preguntas *frecuentes* y soporte"
+          />
         </div>
 
         <div className="relative w-full md:w-72">
@@ -149,38 +148,46 @@ export const FaqAndSupportView: React.FC<FaqAndSupportViewProps> = ({
             placeholder="Buscar en ayuda..."
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            className="boho-input w-full pl-10"
+            className="boho-input w-full !rounded-full pl-10"
           />
         </div>
       </header>
 
-      <div className="flex flex-wrap gap-2">
-        {(Object.keys(CAT_LABELS) as Array<FaqCategory | 'all'>).map((cat) => (
-          <button
-            key={cat}
-            type="button"
-            onClick={() => setCategory(cat)}
-            className={`min-h-[40px] px-4 py-1.5 rounded-full text-xs font-bold transition-colors cursor-pointer ${
-              category === cat
-                ? 'bg-[var(--accent-btn)] text-[var(--accent-btn-text)] shadow-sm'
-                : 'bg-[var(--bg-surface)] border border-[var(--border-hairline)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-            }`}
-          >
-            {CAT_LABELS[cat]}
-          </button>
-        ))}
+      <div className="growy-tab-track">
+        {(Object.keys(CAT_LABELS) as Array<FaqCategory | 'all'>).map((cat) => {
+          const active = category === cat;
+          return (
+            <button
+              key={cat}
+              type="button"
+              onClick={() => setCategory(cat)}
+              style={
+                active
+                  ? { backgroundColor: 'var(--btn-navy-bg)', color: 'var(--btn-navy-text)' }
+                  : undefined
+              }
+              className={`min-h-[38px] px-4 py-1.5 rounded-full text-xs font-bold transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+                active
+                  ? 'shadow-xs'
+                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+              }`}
+            >
+              {CAT_LABELS[cat]}
+            </button>
+          );
+        })}
       </div>
 
       <section className="space-y-3">
         {filteredFaqs.length === 0 ? (
-          <p className="boho-card p-6 text-sm text-[var(--text-secondary)] text-center">
+          <SolidCard className="p-6 text-sm text-[var(--text-secondary)] text-center">
             No encontramos preguntas con ese criterio.
-          </p>
+          </SolidCard>
         ) : (
           filteredFaqs.map((faq) => {
             const isOpen = openId === faq.id;
             return (
-              <div key={faq.id} className="boho-card !rounded-[24px] overflow-hidden">
+              <SolidCard key={faq.id} className="!rounded-[26px] overflow-hidden">
                 <button
                   type="button"
                   onClick={() => setOpenId(isOpen ? null : faq.id)}
@@ -214,7 +221,7 @@ export const FaqAndSupportView: React.FC<FaqAndSupportViewProps> = ({
                     </motion.div>
                   )}
                 </AnimatePresence>
-              </div>
+              </SolidCard>
             );
           })
         )}
@@ -222,18 +229,19 @@ export const FaqAndSupportView: React.FC<FaqAndSupportViewProps> = ({
 
       <InstallAppGuideSection />
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        <form onSubmit={handleSubmitTicket} className="lg:col-span-6 boho-card p-6 space-y-4">
-          <h2 className="font-display text-xl font-bold text-[var(--text-primary)]">
-            Enviar duda o sugerencia
-          </h2>
-          <p className="text-xs text-[var(--text-secondary)]">
-            Se envía directo al administrador ({contactEmail}) · Tu cuenta: {profile.email}
-          </p>
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+        <SolidCard className="lg:col-span-6 p-6">
+          <form onSubmit={handleSubmitTicket} className="space-y-4">
+            <SectionTitle
+              as="h2"
+              size="sm"
+              title="Enviar *duda* o sugerencia"
+              subtitle={`Se envía directo al administrador (${contactEmail}) · Tu cuenta: ${profile.email}`}
+            />
 
           {feedback && (
             <p
-              className={`text-xs font-semibold p-3 rounded-2xl ${
+              className={`text-xs font-semibold p-3 rounded-[20px] ${
                 feedback.type === 'ok'
                   ? 'bg-[var(--pos-soft)] text-[var(--pos-text)]'
                   : 'bg-[var(--danger-soft)] text-[var(--danger-text)]'
@@ -252,20 +260,28 @@ export const FaqAndSupportView: React.FC<FaqAndSupportViewProps> = ({
                   { id: 'problema', label: 'Ocurre un problema' },
                   { id: 'sugerencia', label: 'Sugerencia' },
                 ] as const
-              ).map((opt) => (
-                <button
-                  key={opt.id}
-                  type="button"
-                  onClick={() => setTicketType(opt.id)}
-                  className={`min-h-[42px] px-3 rounded-full text-xs font-bold border transition-colors cursor-pointer ${
-                    ticketType === opt.id
-                      ? 'bg-[var(--accent-btn)] text-[var(--accent-btn-text)] border-transparent shadow-sm'
-                      : 'bg-[var(--bg-soft-alt)] text-[var(--text-secondary)] border-[var(--border-hairline)]'
-                  }`}
-                >
-                  {opt.label}
-                </button>
-              ))}
+              ).map((opt) => {
+                const active = ticketType === opt.id;
+                return (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => setTicketType(opt.id)}
+                    style={
+                      active
+                        ? { backgroundColor: 'var(--btn-navy-bg)', color: 'var(--btn-navy-text)' }
+                        : undefined
+                    }
+                    className={`min-h-[42px] px-3 rounded-full text-xs font-bold border transition-colors cursor-pointer ${
+                      active
+                        ? 'border-transparent shadow-xs'
+                        : 'bg-[var(--bg-soft-alt)] text-[var(--text-secondary)] border-[var(--border-hairline)] hover:text-[var(--text-primary)]'
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                );
+              })}
             </div>
           </div>
 
@@ -363,7 +379,8 @@ export const FaqAndSupportView: React.FC<FaqAndSupportViewProps> = ({
           <button
             type="submit"
             disabled={sending}
-            className="min-h-[44px] px-6 rounded-full bg-[var(--accent-btn)] hover:bg-[var(--accent-btn-hover)] text-[var(--accent-btn-text)] text-sm font-bold inline-flex items-center gap-2 cursor-pointer disabled:opacity-60 shadow-sm"
+            style={{ backgroundColor: 'var(--btn-navy-bg)', color: 'var(--btn-navy-text)' }}
+            className="min-h-[44px] px-6 rounded-full text-sm font-bold inline-flex items-center gap-2 cursor-pointer disabled:opacity-60 shadow-sm hover:opacity-92 transition-opacity"
           >
             <Send className="w-4 h-4" />
             <span>
@@ -376,12 +393,15 @@ export const FaqAndSupportView: React.FC<FaqAndSupportViewProps> = ({
                     : 'Enviar duda al administrador'}
             </span>
           </button>
-        </form>
+          </form>
+        </SolidCard>
 
-        <section className="lg:col-span-6 boho-card p-6 space-y-4">
-          <h2 className="font-display text-xl font-bold text-[var(--text-primary)]">
-            Mis mensajes y reportes ({myTickets.length})
-          </h2>
+        <SolidCard as="section" className="lg:col-span-6 p-6 space-y-4">
+          <SectionTitle
+            as="h2"
+            size="sm"
+            title={`Mis *mensajes* y reportes (${myTickets.length})`}
+          />
 
           {myTickets.length === 0 ? (
             <p className="text-sm text-[var(--text-secondary)] py-6">
@@ -405,7 +425,7 @@ export const FaqAndSupportView: React.FC<FaqAndSupportViewProps> = ({
                 return (
                   <div
                     key={t.id}
-                    className="p-4 rounded-2xl bg-[var(--bg-soft-alt)] border border-[var(--border-hairline)] space-y-1.5"
+                    className="p-4 rounded-[22px] bg-[var(--bg-soft-alt)] border border-[var(--border-hairline)] space-y-1.5"
                   >
                     <div className="flex items-center justify-between gap-2">
                       <p className="font-semibold text-sm text-[var(--text-primary)]">
@@ -434,7 +454,7 @@ export const FaqAndSupportView: React.FC<FaqAndSupportViewProps> = ({
                             key={`${t.id}-att-${idx}`}
                             href={att.dataUrl}
                             download={att.name}
-                            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] text-[11px] font-semibold hover:underline"
+                            className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border border-[var(--border-hairline)] bg-[var(--bg-surface)] text-[11px] font-semibold hover:underline"
                           >
                             <FileText className="w-3 h-3" />
                             <span>{att.name}</span>
@@ -455,7 +475,7 @@ export const FaqAndSupportView: React.FC<FaqAndSupportViewProps> = ({
               })}
             </div>
           )}
-        </section>
+        </SolidCard>
       </div>
     </div>
   );

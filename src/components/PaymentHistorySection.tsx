@@ -26,6 +26,7 @@ import type {
   PaymentReceiptStatus,
   UserProfile,
 } from '../types/finance';
+import { SectionTitle, SolidCard } from './design-system';
 
 interface PaymentHistorySectionProps {
   profile: UserProfile;
@@ -218,16 +219,18 @@ export const PaymentHistorySection: React.FC<PaymentHistorySectionProps> = ({
   };
 
   return (
-    <section className="boho-card p-6 space-y-5">
+    <SolidCard as="section" className="p-6 space-y-5">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="flex items-start gap-3">
           <div className="w-10 h-10 rounded-2xl bg-[var(--pos-soft)] flex items-center justify-center shrink-0">
             <Receipt className="w-5 h-5 text-[var(--pos-text)]" />
           </div>
           <div>
-            <h2 className="font-display text-lg font-bold text-[var(--text-primary)]">
-              Historial de pagos y comprobantes
-            </h2>
+            <SectionTitle
+              as="h2"
+              size="sm"
+              title="Historial de *pagos* y comprobantes"
+            />
             <p className="text-xs text-[var(--text-secondary)] mt-0.5">
               Registro transparente de tus suscripciones mensuales y anuales, IDs de transacción y
               comprobantes enviados a <strong>{profile.email}</strong>.
@@ -282,7 +285,11 @@ export const PaymentHistorySection: React.FC<PaymentHistorySectionProps> = ({
               type="button"
               disabled={syncingLegacy}
               onClick={() => void handleSyncLegacyPayment()}
-              className="min-h-[40px] px-5 rounded-full bg-[var(--accent-btn)] hover:bg-[var(--accent-btn-hover)] text-[var(--accent-btn-text)] text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer shrink-0 disabled:opacity-50"
+              style={{
+                backgroundColor: 'var(--btn-navy-bg)',
+                color: 'var(--btn-navy-text)',
+              }}
+              className="min-h-[40px] px-5 rounded-full text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer shrink-0 disabled:opacity-50 hover:opacity-92 transition-opacity"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${syncingLegacy ? 'animate-spin' : ''}`} />
               <span>{syncingLegacy ? 'Sincronizando...' : 'Generar comprobante'}</span>
@@ -464,7 +471,7 @@ export const PaymentHistorySection: React.FC<PaymentHistorySectionProps> = ({
           role="dialog"
           aria-modal="true"
         >
-          <div className="w-full max-w-md boho-card p-6 space-y-4">
+          <div className="w-full max-w-md growy-solid p-6 space-y-4">
             <div className="flex items-start justify-between gap-3">
               <div>
                 <p className="text-[11px] font-bold uppercase tracking-wider text-[var(--accent-strong)]">
@@ -535,7 +542,11 @@ export const PaymentHistorySection: React.FC<PaymentHistorySectionProps> = ({
               <button
                 type="button"
                 onClick={() => handleDownloadReceipt(selectedReceipt)}
-                className="flex-1 min-h-[42px] px-4 rounded-full bg-[var(--accent-btn)] hover:bg-[var(--accent-btn-hover)] text-[var(--accent-btn-text)] text-xs font-bold inline-flex items-center justify-center gap-1.5 cursor-pointer"
+                style={{
+                  backgroundColor: 'var(--btn-navy-bg)',
+                  color: 'var(--btn-navy-text)',
+                }}
+                className="flex-1 min-h-[42px] px-4 rounded-full text-xs font-bold inline-flex items-center justify-center gap-1.5 cursor-pointer hover:opacity-92 transition-opacity"
               >
                 <Download className="w-3.5 h-3.5" />
                 <span>Descargar</span>
@@ -552,6 +563,6 @@ export const PaymentHistorySection: React.FC<PaymentHistorySectionProps> = ({
           </div>
         </div>
       )}
-    </section>
+    </SolidCard>
   );
 };
