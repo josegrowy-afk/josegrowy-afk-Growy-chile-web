@@ -28,6 +28,7 @@ export interface ProductShowcaseCardProps {
     disabled?: boolean;
   };
   iconSrc?: string;
+  icon?: React.ReactNode;
   mockupSlot: React.ReactNode;
 }
 
@@ -51,6 +52,7 @@ export const ProductShowcaseCard: React.FC<ProductShowcaseCardProps> = ({
   onPaymentCtaClick,
   secondaryAction,
   iconSrc,
+  icon,
   mockupSlot,
 }) => {
   const hasExternalUrl =
@@ -71,7 +73,9 @@ export const ProductShowcaseCard: React.FC<ProductShowcaseCardProps> = ({
       <div className="lg:col-span-6 space-y-6">
         <div className="space-y-3">
           <div className="flex items-center gap-3.5">
-            {iconSrc && (
+            {icon ? (
+              <div className="shrink-0">{icon}</div>
+            ) : iconSrc ? (
               <div className="w-16 h-16 inline-flex items-center justify-center shrink-0">
                 <img
                   src={iconSrc}
@@ -81,7 +85,7 @@ export const ProductShowcaseCard: React.FC<ProductShowcaseCardProps> = ({
                   referrerPolicy="no-referrer"
                 />
               </div>
-            )}
+            ) : null}
             <div>
               <p className="text-xs font-bold tracking-[0.06em] uppercase text-[var(--sec-text)]">
                 {eyebrow}

@@ -29,6 +29,7 @@ import {
   createSupportTicket,
   DEFAULT_LANDING_CONTENT,
   trackFunnelStepOncePerSession,
+  verifyExcelPaymentReturn,
 } from '../firebase/services';
 import {
   calculatePlanComparisonFromConfig,
@@ -82,6 +83,10 @@ import {
 } from './MotionPrimitives';
 import { EquilibrioProductMockup, ProductShowcaseCard } from './ProductShowcaseCard';
 import { PublicBreakEvenCalculator } from './PublicBreakEvenCalculator';
+import {
+  EquilibrioLiteExcelSection,
+  type ExcelReturnStatus,
+} from './EquilibrioLiteExcelSection';
 
 interface LandingPageProps {
   config: AppConfig;
@@ -90,7 +95,6 @@ interface LandingPageProps {
   isSignedIn: boolean;
   onToggleTheme: () => void;
   onLoginClick: () => void;
-  onTryDemo?: () => void;
   authLoading: boolean;
   authError: string | null;
 }
@@ -143,7 +147,6 @@ export const LandingPage: React.FC<LandingPageProps> = ({
   isSignedIn,
   onToggleTheme,
   onLoginClick,
-  onTryDemo,
   authLoading,
   authError,
 }) => {
@@ -194,8 +197,9 @@ export const LandingPage: React.FC<LandingPageProps> = ({
   const [learnVideoStarted, setLearnVideoStarted] = useState(false);
 
   // Modales legales y lector de guías (Blog)
-  const [legalModal, setLegalModal] = useState<'privacy' | 'terms' | null>(null);
+  const [legalModal, setLegalModal] = useState<'privacy' | 'terms' | 'excel_license' | null>(null);
   const [selectedBlogPost, setSelectedBlogPost] = useState<BlogPost | null>(null);
+  const [excelReturnStatus, setExcelReturnStatus] = useState<ExcelReturnStatus | null>(null);
 
   const heroChecks = useMemo(() => splitLines(lc.heroChecks), [lc.heroChecks]);
   const painPointsList = useMemo(() => splitLines(lc.painPoints), [lc.painPoints]);
@@ -225,6 +229,44 @@ export const LandingPage: React.FC<LandingPageProps> = ({
   // 4.5 Analítica mínima de embudo: registrar visita una vez por sesión sin PII ni cookies
   useEffect(() => {
     trackFunnelStepOncePerSession('visit', { source: 'landing' });
+  }, []);
+
+  // Verificación al volver de Mercado Pago por compra única de Equilibrio Lite Excel (?excel_order=...)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const orderId = params.get('excel_order');
+    if (!orderId) return;
+
+    const paymentId = params.get('payment_id') || params.get('collection_id') || undefined;
+    const mpStatus = params.get('status') || params.get('collection_status') || undefined;
+
+    setExcelReturnStatus({
+      loading: true,
+      message: 'Consultando confirmación en Mercado Pago y preparando tu planilla personalizada...',
+    });
+
+    verifyExcelPaymentReturn({ orderId, paymentId, status: mpStatus })
+      .then((res) => {
+        setExcelReturnStatus({
+          loading: false,
+          ok: res.ok && res.delivered,
+          status: res.status,
+          licenseId: res.licenseId,
+          message: res.message,
+        });
+      })
+      .catch(() => {
+        setExcelReturnStatus({
+          loading: false,
+          ok: false,
+          message:
+            'No pudimos confirmar tu pago en este segundo. Si ya pagaste, revisa tu correo o escríbenos a jose.growy@gmail.com.',
+        });
+      })
+      .finally(() => {
+        const cleanUrl = `${window.location.pathname}#equilibrio-lite-excel`;
+        window.history.replaceState({}, document.title, cleanUrl);
+      });
   }, []);
 
   // 4.4 SEO dinámico: FAQPage JSON-LD construido únicamente desde FAQs publicadas
@@ -416,8 +458,8 @@ export const LandingPage: React.FC<LandingPageProps> = ({
     [navItems]
   );
 
-  const heroChips: HeroBannerChip[] = useMemo(() => {
-    const base: HeroBannerChip[] = [
+  const heroChips: HeroBannerChip[] = useMemo(
+    () => [
       {
         id: 'equilibrio',
         label: `${lc.heroPrimaryCta}`,
@@ -426,7 +468,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
       },
       {
         id: 'cimientos',
-        label: 'Calcular *equilibrio*',
+        label: 'Calculadoras *gratis*',
         href: '#punto-de-equilibrio',
         variant: 'cream',
       },
@@ -436,17 +478,9 @@ export const LandingPage: React.FC<LandingPageProps> = ({
         href: '#aprende-con-nosotros',
         variant: 'lilac',
       },
-    ];
-    if (onTryDemo && !isSignedIn) {
-      base.splice(1, 0, {
-        id: 'demo',
-        label: 'Probar *demo* gratis',
-        onClick: onTryDemo,
-        variant: 'sage',
-      });
-    }
-    return base;
-  }, [isSignedIn, lc.heroPrimaryCta, onTryDemo]);
+    ],
+    [lc.heroPrimaryCta]
+  );
 
   return (
     <div id="inicio" className="relative min-h-screen flex flex-col">
@@ -513,7 +547,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                 transition={{ duration: 0.5, delay: 0.08, ease: GROWY_EASE }}
                 className="w-full max-w-[340px] rounded-[32px] bg-white/40 border border-white/75 backdrop-blur-md p-4 sm:p-5 shadow-[var(--glass-shadow)]"
               >
-                <GrowyCharacterArtwork className="w-full max-w-[290px] mx-auto block select-none growy-float-a" />
+                <GrowyCharacterArtwork className="w-full max-w-[290px] mx-auto block select-none" />
               </motion.div>
             }
           />
@@ -938,7 +972,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               onPaymentCtaClick={(planType) =>
                 trackFunnelStepOncePerSession('payment', { source: 'landing', planType })
               }
-              iconSrc="/assets/aistudio/equilibrio-chispa-claro_8dfad465.svg"
+              icon={<EquilibrioProductIcon size="lg" />}
               secondaryAction={{
                 label: isSignedIn
                   ? 'Abrir mi panel'
@@ -950,20 +984,17 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               }}
               mockupSlot={<EquilibrioProductMockup />}
             />
-            {onTryDemo && !isSignedIn && (
-              <div className="mt-5 flex flex-wrap items-center justify-center gap-3 text-center">
-                <span className="text-xs text-[var(--text-secondary)]">
-                  ¿Prefieres recorrer Equilibrio por dentro antes de entrar?
-                </span>
-                <ChipLink
-                  variant="sage"
-                  label="Explorar *demo* de Cafetería & Repostería"
-                  onClick={onTryDemo}
-                />
-              </div>
-            )}
           </ScrollReveal>
         </section>
+
+        {/* 5A-EXCEL. PRODUCTO DE ENTRADA: EQUILIBRIO LITE EXCEL (PAGO ÚNICO) */}
+        <EquilibrioLiteExcelSection
+          config={config}
+          returnStatus={excelReturnStatus}
+          onDismissReturnStatus={() => setExcelReturnStatus(null)}
+          onOpenLicenseTerms={() => setLegalModal('excel_license')}
+          onOpenPrivacy={() => setLegalModal('privacy')}
+        />
 
         {/* 5B. PRIVACIDAD DE TUS DATOS Y SOPORTE HUMANO (4.1) */}
         <section
@@ -1626,7 +1657,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
             <GrowyLogoMark size="sm" showSlogan />
             <span>{config.contactEmail}</span>
           </div>
-          <div className="flex items-center gap-5">
+          <div className="flex flex-wrap items-center justify-center gap-5">
             <button
               type="button"
               onClick={() => setLegalModal('privacy')}
@@ -1641,10 +1672,20 @@ export const LandingPage: React.FC<LandingPageProps> = ({
             >
               Términos de uso
             </button>
+            {config.excelActive !== false && (
+              <button
+                type="button"
+                onClick={() => setLegalModal('excel_license')}
+                className="hover:underline cursor-pointer min-h-[36px]"
+              >
+                Licencia Excel
+              </button>
+            )}
           </div>
         </div>
       </footer>
 
+      {/* AVISO LEGAL: Un abogado en Chile debe revisar la Política de privacidad y los Términos de licencia personal antes de publicar en producción. */}
       <AnimatePresence>
         {legalModal && (
           <motion.div
@@ -1652,7 +1693,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.18 }}
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4"
+            className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-xs p-4"
             role="dialog"
             aria-modal="true"
           >
@@ -1663,9 +1704,13 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               transition={{ duration: 0.22, ease: GROWY_EASE }}
               className="w-full max-w-lg growy-solid rounded-[28px] p-6 space-y-4 max-h-[85vh] overflow-y-auto"
             >
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between gap-3">
                 <h3 className="font-display text-2xl font-extrabold">
-                  {legalModal === 'privacy' ? 'Aviso de privacidad' : 'Términos de uso'}
+                  {legalModal === 'privacy'
+                    ? 'Aviso de privacidad'
+                    : legalModal === 'excel_license'
+                      ? 'Términos de licencia personal'
+                      : 'Términos de uso'}
                 </h3>
                 <button
                   type="button"
@@ -1684,15 +1729,44 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                     Google o con correo y contraseña) sobre Google Cloud Firestore.
                   </p>
                   <p>
+                    Para quienes adquieren <strong>Equilibrio Lite Excel</strong>, guardamos
+                    únicamente los datos estrictamente necesarios para emitir tu licencia personal y
+                    entregar tu planilla por correo: nombre completo, correo electrónico, ID único de
+                    licencia, fecha de aceptación de términos y referencia de pago en Mercado Pago.
+                  </p>
+                  <p>
                     Tus costos, productos, proyecciones y resultados reales son privados y están
-                    protegidos mediante reglas de seguridad por usuario (`ownerUid`). Nunca te
-                    pedimos claves bancarias, ni del SII, ni vendemos tu información a terceros.
+                    protegidos mediante reglas de seguridad. Nunca te pedimos claves bancarias ni
+                    del SII, ni vendemos o cedemos tu información a terceros.
                   </p>
                   <p>
                     Para mejorar la claridad de la página, medimos únicamente conteos mínimos de
                     embudo por sesión anónima sin cookies ni datos personales. Puedes exportar un
-                    respaldo completo en JSON o solicitar la eliminación de tu cuenta escribiendo a{' '}
+                    respaldo o solicitar la eliminación de tus datos escribiendo a{' '}
                     {config.contactEmail}.
+                  </p>
+                </div>
+              ) : legalModal === 'excel_license' ? (
+                <div className="text-sm text-[var(--text-secondary)] space-y-3 leading-relaxed">
+                  <p>
+                    Al adquirir <strong>{config.excelProductName || 'Equilibrio Lite Excel'}</strong>,
+                    GROWy te otorga una <strong>licencia personal, única e intransferible</strong>{' '}
+                    para usar la planilla en la gestión interna de tu propio negocio o emprendimiento.
+                  </p>
+                  <p>
+                    Cada archivo entregado se personaliza con tu nombre completo y un código único de
+                    licencia (formato <code className="font-mono">GROWY-XXXXXXXX</code>) dentro del
+                    documento. No está permitido copiar, compartir públicamente, distribuir, regalar,
+                    alquilar ni revender esta planilla, ni total ni parcialmente.
+                  </p>
+                  <p>
+                    La planilla funciona como apoyo de orden manual en tu computador y sus estimaciones
+                    tributarias son únicamente referenciales: no reemplazan a un contador ni constituyen
+                    asesoría legal o tributaria. Además, no reemplaza la tecnología automatizada ni al
+                    Analista PYME de Equilibrio.
+                  </p>
+                  <p className="text-xs text-[var(--text-secondary)] pt-2 border-t border-[var(--border-hairline)]">
+                    Dudas sobre tu licencia o soporte de entrega: {config.contactEmail}.
                   </p>
                 </div>
               ) : (

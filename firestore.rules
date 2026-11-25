@@ -81,7 +81,10 @@ service cloud.firestore {
         'creatorPhotoUrl', 'creatorBio', 'creatorClosingNote', 'creatorQuoteCta',
         'closingTitle', 'closingSubtitle', 'closingCtaLabel',
         'painEyebrow', 'painTitle', 'painPoints', 'priceComparisonText',
-        'privacyTitle', 'privacyBody', 'supportHumanTitle', 'supportHumanBody'
+        'privacyTitle', 'privacyBody', 'supportHumanTitle', 'supportHumanBody',
+        'excelEyebrow', 'excelTitle', 'excelSubtitle', 'excelAudienceText',
+        'excelNonReplacementNotice', 'excelBridgeQuote', 'excelIncludesList',
+        'excelCtaLabel', 'excelSecondaryLabel', 'excelTaxDisclaimer'
       ]) &&
       (!('heroEyebrow' in lc) || (lc.heroEyebrow is string && lc.heroEyebrow.size() <= 140)) &&
       (!('heroPrimaryCta' in lc) || (lc.heroPrimaryCta is string && lc.heroPrimaryCta.size() <= 80)) &&
@@ -142,7 +145,17 @@ service cloud.firestore {
       (!('privacyTitle' in lc) || (lc.privacyTitle is string && lc.privacyTitle.size() <= 180)) &&
       (!('privacyBody' in lc) || (lc.privacyBody is string && lc.privacyBody.size() <= 700)) &&
       (!('supportHumanTitle' in lc) || (lc.supportHumanTitle is string && lc.supportHumanTitle.size() <= 180)) &&
-      (!('supportHumanBody' in lc) || (lc.supportHumanBody is string && lc.supportHumanBody.size() <= 700));
+      (!('supportHumanBody' in lc) || (lc.supportHumanBody is string && lc.supportHumanBody.size() <= 700)) &&
+      (!('excelEyebrow' in lc) || (lc.excelEyebrow is string && lc.excelEyebrow.size() <= 140)) &&
+      (!('excelTitle' in lc) || (lc.excelTitle is string && lc.excelTitle.size() <= 220)) &&
+      (!('excelSubtitle' in lc) || (lc.excelSubtitle is string && lc.excelSubtitle.size() <= 600)) &&
+      (!('excelAudienceText' in lc) || (lc.excelAudienceText is string && lc.excelAudienceText.size() <= 400)) &&
+      (!('excelNonReplacementNotice' in lc) || (lc.excelNonReplacementNotice is string && lc.excelNonReplacementNotice.size() <= 600)) &&
+      (!('excelBridgeQuote' in lc) || (lc.excelBridgeQuote is string && lc.excelBridgeQuote.size() <= 300)) &&
+      (!('excelIncludesList' in lc) || (lc.excelIncludesList is string && lc.excelIncludesList.size() <= 1000)) &&
+      (!('excelCtaLabel' in lc) || (lc.excelCtaLabel is string && lc.excelCtaLabel.size() <= 100)) &&
+      (!('excelSecondaryLabel' in lc) || (lc.excelSecondaryLabel is string && lc.excelSecondaryLabel.size() <= 100)) &&
+      (!('excelTaxDisclaimer' in lc) || (lc.excelTaxDisclaimer is string && lc.excelTaxDisclaimer.size() <= 400));
     }
 
     function isValidTestimonial(t) {
@@ -169,7 +182,9 @@ service cloud.firestore {
         'priceLabel', 'currencyNote', 'heroTitle', 'heroSubtitle',
         'guaranteeText', 'refundGuaranteeText', 'whatsappUrl', 'testimonials',
         'contactEmail', 'welcomeMessage', 'announcementText',
-        'announcementActive', 'landingContent', 'updatedAt'
+        'announcementActive', 'excelProductName', 'excelPriceLabel',
+        'excelPriceAmount', 'excelPaymentUrl', 'excelActive',
+        'landingContent', 'updatedAt'
       ]) &&
       data.paymentUrl is string && data.paymentUrl.size() <= 500 &&
       (!('annualPaymentUrl' in data) || (data.annualPaymentUrl is string && data.annualPaymentUrl.size() <= 500)) &&
@@ -199,6 +214,11 @@ service cloud.firestore {
       data.welcomeMessage is string && data.welcomeMessage.size() <= 400 &&
       data.announcementText is string && data.announcementText.size() <= 300 &&
       data.announcementActive is bool &&
+      (!('excelProductName' in data) || (data.excelProductName is string && data.excelProductName.size() >= 1 && data.excelProductName.size() <= 120)) &&
+      (!('excelPriceLabel' in data) || (data.excelPriceLabel is string && data.excelPriceLabel.size() >= 1 && data.excelPriceLabel.size() <= 60)) &&
+      (!('excelPriceAmount' in data) || (data.excelPriceAmount is number && data.excelPriceAmount >= 0 && data.excelPriceAmount <= 10000000)) &&
+      (!('excelPaymentUrl' in data) || (data.excelPaymentUrl is string && data.excelPaymentUrl.size() <= 500)) &&
+      (!('excelActive' in data) || data.excelActive is bool) &&
       (!('landingContent' in data) || isValidLandingContent(data.landingContent)) &&
       data.updatedAt is timestamp;
     }
@@ -490,6 +510,32 @@ service cloud.firestore {
         data.createdAt is timestamp;
     }
 
+    function isValidExcelOrder(data) {
+      return data.keys().hasAll([
+        'id', 'name', 'email', 'status', 'amountCLP',
+        'licenseId', 'termsAcceptedAt', 'createdAt', 'deliveryAttempts'
+      ]) &&
+      data.keys().hasOnly([
+        'id', 'name', 'email', 'status', 'amountCLP', 'paymentReference',
+        'licenseId', 'termsAcceptedAt', 'createdAt', 'paidAt',
+        'deliveredAt', 'deliveryAttempts', 'lastError'
+      ]) &&
+      isValidId(data.id) &&
+      data.name is string && data.name.size() >= 2 && data.name.size() <= 100 &&
+      data.email is string && data.email.size() >= 5 && data.email.size() <= 160 &&
+      data.status in ['pendiente', 'pagada', 'entregada', 'error_envio', 'anulada'] &&
+      data.amountCLP is number && data.amountCLP >= 0 && data.amountCLP <= 10000000 &&
+      (!('paymentReference' in data) || (data.paymentReference is string && data.paymentReference.size() <= 160)) &&
+      data.licenseId is string && data.licenseId.size() >= 6 && data.licenseId.size() <= 32 &&
+      data.licenseId.matches('^GROWY-[A-Z0-9]{8}$') &&
+      data.termsAcceptedAt is string && data.termsAcceptedAt.size() >= 10 && data.termsAcceptedAt.size() <= 40 &&
+      data.createdAt is timestamp &&
+      (!('paidAt' in data) || (data.paidAt is string && data.paidAt.size() <= 40)) &&
+      (!('deliveredAt' in data) || (data.deliveredAt is string && data.deliveredAt.size() <= 40)) &&
+      data.deliveryAttempts is number && data.deliveryAttempts >= 0 && data.deliveryAttempts <= 1000 &&
+      (!('lastError' in data) || (data.lastError is string && data.lastError.size() <= 400));
+    }
+
     // 1. Public App Configuration
     match /appConfig/{configId} {
       allow get: if isValidId(configId);
@@ -763,6 +809,23 @@ service cloud.firestore {
         incoming().createdAt == request.time;
       allow update: if false;
       allow delete: if isValidId(eventId) && isAdmin();
+    }
+
+    // 11. Equilibrio Lite Excel Orders (No public/client writes; server Admin SDK & verified admins only)
+    match /excelOrders/{orderId} {
+      allow get, list: if isAdmin();
+      allow create: if false;
+      allow update: if isValidId(orderId) && isAdmin() && isValidExcelOrder(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().name == existing().name &&
+        incoming().email == existing().email &&
+        incoming().amountCLP == existing().amountCLP &&
+        incoming().licenseId == existing().licenseId &&
+        incoming().termsAcceptedAt == existing().termsAcceptedAt &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['status', 'lastError']) &&
+        incoming().status == 'anulada';
+      allow delete: if false;
     }
   }
 }

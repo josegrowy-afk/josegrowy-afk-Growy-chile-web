@@ -1,10 +1,14 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  AlertCircle,
+  Ban,
   BarChart3,
   CalendarCheck,
   Check,
   CheckCircle2,
   Copy,
+  Download,
+  FileSpreadsheet,
   FileText,
   Gift,
   KeyRound,
@@ -13,6 +17,7 @@ import {
   Pencil,
   Plus,
   Quote,
+  RefreshCw,
   Search,
   Shield,
   Trash2,
@@ -20,17 +25,19 @@ import {
 } from 'lucide-react';
 import { formatISODateSpanish, getSubscriptionStatus } from '../finance/subscription';
 import { calculatePlanComparisonFromConfig } from '../finance/phase1Insights';
-import { REFERRAL_PROGRAM_RULES } from '../finance/phase3Insights';
+import { REFERRAL_PROGRAM_RULES, escapeCsvCell } from '../finance/phase3Insights';
 import { computeFunnelSummary, sanitizeWhatsappUrl } from '../finance/phase4Marketing';
 import {
   BOOTSTRAPPED_ADMIN_EMAIL,
   DEFAULT_LANDING_CONTENT,
+  adminCancelExcelOrder,
   adminCreateAccessCode,
   adminDeleteFaq,
   adminDeleteUser,
   adminGrantReferralBonus,
   adminRegisterAnnualPayment,
   adminRegisterMonthlyPayment,
+  adminResendExcelOrder,
   adminRevokeAccessCode,
   adminSaveAppConfig,
   adminSaveFaq,
@@ -42,6 +49,7 @@ import {
   subscribeAllTicketsAdmin,
   subscribeAllUsersAdmin,
   subscribeAdminLogs,
+  subscribeExcelOrdersAdmin,
   subscribeFunnelEventsAdmin,
 } from '../firebase/services';
 import type {
@@ -49,6 +57,8 @@ import type {
   AccessStatus,
   AdminLogEntry,
   AppConfig,
+  ExcelOrderRecord,
+  ExcelOrderStatus,
   FaqCategory,
   FaqItem,
   FunnelEventRecord,
@@ -68,7 +78,40 @@ interface AdminViewProps {
   appConfig: AppConfig;
 }
 
-type AdminSection = 'overview' | 'users' | 'codes' | 'faqs' | 'config' | 'tickets' | 'logs';
+type AdminSection = 'overview' | 'users' | 'codes' | 'faqs' | 'config' | 'excel' | 'tickets' | 'logs';
+
+function formatOrderTimestamp(value: unknown): string {
+  if (!value) return '—';
+  try {
+    let d: Date | null = null;
+    if (typeof value === 'string') {
+      d = new Date(value);
+    } else if (value instanceof Date) {
+      d = value;
+    } else if (
+      typeof value === 'object' &&
+      value !== null &&
+      'toDate' in value &&
+      typeof (value as { toDate: () => Date }).toDate === 'function'
+    ) {
+      d = (value as { toDate: () => Date }).toDate();
+    } else if (
+      typeof value === 'object' &&
+      value !== null &&
+      'seconds' in value &&
+      typeof (value as { seconds: number }).seconds === 'number'
+    ) {
+      d = new Date((value as { seconds: number }).seconds * 1000);
+    }
+    if (!d || Number.isNaN(d.getTime())) return '—';
+    return d.toLocaleString('es-CL', {
+      dateStyle: 'short',
+      timeStyle: 'short',
+    });
+  } catch {
+    return '—';
+  }
+}
 
 export const AdminView: React.FC<AdminViewProps> = ({ adminProfile, appConfig }) => {
   const [section, setSection] = useState<AdminSection>('overview');
@@ -78,12 +121,21 @@ export const AdminView: React.FC<AdminViewProps> = ({ adminProfile, appConfig })
   const [tickets, setTickets] = useState<SupportTicket[]>([]);
   const [logs, setLogs] = useState<AdminLogEntry[]>([]);
   const [funnelEvents, setFunnelEvents] = useState<FunnelEventRecord[]>([]);
+  const [excelOrders, setExcelOrders] = useState<ExcelOrderRecord[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
 
   // Filtros de usuarios e ID de transacción opcional al registrar pago
   const [userSearch, setUserSearch] = useState('');
   const [userFilter, setUserFilter] = useState<AccessStatus | 'all'>('all');
   const [paymentTxDraft, setPaymentTxDraft] = useState('');
+
+  // Filtros y acciones de órdenes Equilibrio Lite Excel
+  const [excelSearch, setExcelSearch] = useState('');
+  const [excelStatusFilter, setExcelStatusFilter] = useState<ExcelOrderStatus | 'all'>('all');
+  const [resendingOrderId, setResendingOrderId] = useState<string | null>(null);
+  const [cancellingOrderId, setCancellingOrderId] = useState<string | null>(null);
+  const [confirmCancelOrderId, setConfirmCancelOrderId] = useState<string | null>(null);
+  const [savingExcelConfig, setSavingExcelConfig] = useState(false);
 
   // Códigos
   const [codeNote, setCodeNote] = useState('');
@@ -194,6 +246,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ adminProfile, appConfig })
       subscribeAllTicketsAdmin(setTickets),
       subscribeAdminLogs(setLogs),
       subscribeFunnelEventsAdmin(setFunnelEvents),
+      subscribeExcelOrdersAdmin(setExcelOrders),
     ];
     return () => unsubs.forEach((u) => u());
   }, []);
@@ -258,6 +311,44 @@ export const AdminView: React.FC<AdminViewProps> = ({ adminProfile, appConfig })
       );
     });
   }, [users, userFilter, userSearch]);
+
+  const excelStats = useMemo(() => {
+    let entregadas = 0;
+    let pendientes = 0;
+    let errorEnvio = 0;
+    let anuladas = 0;
+    let pagadas = 0;
+    for (const o of excelOrders) {
+      if (o.status === 'entregada') entregadas += 1;
+      else if (o.status === 'pendiente') pendientes += 1;
+      else if (o.status === 'error_envio') errorEnvio += 1;
+      else if (o.status === 'anulada') anuladas += 1;
+      else if (o.status === 'pagada') pagadas += 1;
+    }
+    return {
+      total: excelOrders.length,
+      entregadas,
+      pendientes,
+      pagadas,
+      errorEnvio,
+      anuladas,
+    };
+  }, [excelOrders]);
+
+  const filteredExcelOrders = useMemo(() => {
+    const q = excelSearch.trim().toLowerCase();
+    return excelOrders.filter((o) => {
+      if (excelStatusFilter !== 'all' && o.status !== excelStatusFilter) return false;
+      if (!q) return true;
+      return (
+        o.name.toLowerCase().includes(q) ||
+        o.email.toLowerCase().includes(q) ||
+        o.licenseId.toLowerCase().includes(q) ||
+        o.id.toLowerCase().includes(q) ||
+        (o.paymentReference ?? '').toLowerCase().includes(q)
+      );
+    });
+  }, [excelOrders, excelSearch, excelStatusFilter]);
 
   const handleToggleUserStatus = async (
     target: UserProfile,
@@ -371,6 +462,108 @@ export const AdminView: React.FC<AdminViewProps> = ({ adminProfile, appConfig })
     showNotice('Configuración global y textos de la landing actualizados.');
   };
 
+  const handleSaveExcelConfig = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSavingExcelConfig(true);
+    try {
+      await adminSaveAppConfig(adminProfile, draftConfig);
+      showNotice('Configuración y textos de Equilibrio Lite Excel guardados.');
+    } catch (err) {
+      showNotice(
+        err instanceof Error
+          ? err.message
+          : 'No pudimos guardar la configuración de Equilibrio Lite Excel.'
+      );
+    } finally {
+      setSavingExcelConfig(false);
+    }
+  };
+
+  const handleResendExcelOrder = async (order: ExcelOrderRecord) => {
+    setResendingOrderId(order.id);
+    try {
+      const res = await adminResendExcelOrder({ admin: adminProfile, order });
+      showNotice(res.message);
+    } catch (err) {
+      showNotice(
+        err instanceof Error ? err.message : 'No se pudo reenviar la planilla por correo.'
+      );
+    } finally {
+      setResendingOrderId(null);
+    }
+  };
+
+  const handleConfirmCancelExcelOrder = async (order: ExcelOrderRecord) => {
+    setCancellingOrderId(order.id);
+    try {
+      const res = await adminCancelExcelOrder({
+        admin: adminProfile,
+        order,
+        reason: 'Anulada manualmente desde pestaña Excel del Panel Administrador',
+      });
+      setConfirmCancelOrderId(null);
+      showNotice(res.message);
+    } catch (err) {
+      showNotice(
+        err instanceof Error ? err.message : 'No se pudo anular la orden.'
+      );
+    } finally {
+      setCancellingOrderId(null);
+    }
+  };
+
+  const handleExportExcelOrdersCsv = () => {
+    const delimiter = ';';
+    const headers = [
+      'ID Orden',
+      'Nombre',
+      'Correo',
+      'ID Licencia',
+      'Estado',
+      'Monto CLP',
+      'Referencia Pago',
+      'Acepto Terminos',
+      'Creada',
+      'Pagada',
+      'Entregada',
+      'Intentos Envio',
+      'Ultimo Error',
+    ];
+    const rows: string[] = [
+      headers.map((h) => escapeCsvCell(h, delimiter)).join(delimiter),
+      ...filteredExcelOrders.map((o) =>
+        [
+          o.id,
+          o.name,
+          o.email,
+          o.licenseId,
+          o.status,
+          o.amountCLP,
+          o.paymentReference ?? '',
+          o.termsAcceptedAt,
+          formatOrderTimestamp(o.createdAt),
+          formatOrderTimestamp(o.paidAt),
+          formatOrderTimestamp(o.deliveredAt),
+          o.deliveryAttempts ?? 0,
+          o.lastError ?? '',
+        ]
+          .map((cell) => escapeCsvCell(cell, delimiter))
+          .join(delimiter)
+      ),
+    ];
+    const csvContent = `\uFEFF${rows.join('\r\n')}`;
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `ordenes-equilibrio-lite-excel-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    showNotice(`CSV exportado (${filteredExcelOrders.length} orden/es).`);
+  };
+
   const handleSaveTicketReply = async (ticket: SupportTicket, status: TicketStatus) => {
     await adminUpdateSupportTicket({
       admin: adminProfile,
@@ -389,6 +582,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ adminProfile, appConfig })
     { id: 'codes', label: `Códigos (${stats.unusedCodes})` },
     { id: 'faqs', label: `FAQ (${faqs.length})` },
     { id: 'config', label: 'Configuración y Landing' },
+    { id: 'excel', label: `Excel (${excelOrders.length})` },
     { id: 'tickets', label: `Soporte (${stats.openTickets})` },
     { id: 'logs', label: 'Actividad' },
   ];
@@ -2077,6 +2271,465 @@ export const AdminView: React.FC<AdminViewProps> = ({ adminProfile, appConfig })
             Guardar toda la configuración y textos de la landing
           </button>
         </form>
+      )}
+
+      {/* EQUILIBRIO LITE EXCEL: ÓRDENES, REENVÍO, ANULACIÓN, CSV Y CONFIGURACIÓN */}
+      {section === 'excel' && (
+        <section className="space-y-6">
+          <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+            <div className="rounded-[24px] p-4 bg-[var(--sec-soft)] border border-[var(--sec-border)]">
+              <p className="text-xs font-semibold text-[var(--sec-muted)]">Total órdenes</p>
+              <p className="font-mono tabular-nums text-2xl font-bold text-[var(--text-primary)] mt-1">
+                {excelStats.total}
+              </p>
+            </div>
+            <div className="rounded-[24px] p-4 bg-[var(--pos-soft)] border border-[var(--pos-border)]">
+              <p className="text-xs font-semibold text-[var(--pos-muted)]">Entregadas</p>
+              <p className="font-mono tabular-nums text-2xl font-bold text-[var(--pos-text)] mt-1">
+                {excelStats.entregadas}
+              </p>
+            </div>
+            <div className="rounded-[24px] p-4 bg-[var(--warn-soft)] border border-[var(--warn-border)]">
+              <p className="text-xs font-semibold text-[var(--warn-muted)]">Pendientes</p>
+              <p className="font-mono tabular-nums text-2xl font-bold text-[var(--warn-text)] mt-1">
+                {excelStats.pendientes + excelStats.pagadas}
+              </p>
+            </div>
+            <div className="rounded-[24px] p-4 bg-[var(--danger-soft)] border border-[var(--danger-border)]">
+              <p className="text-xs font-semibold text-[var(--danger-muted)]">Error de envío</p>
+              <p className="font-mono tabular-nums text-2xl font-bold text-[var(--danger-text)] mt-1">
+                {excelStats.errorEnvio}
+              </p>
+            </div>
+            <div className="rounded-[24px] p-4 bg-[var(--bg-soft-alt)] border border-[var(--border-hairline)]">
+              <p className="text-xs font-semibold text-[var(--text-secondary)]">Anuladas</p>
+              <p className="font-mono tabular-nums text-2xl font-bold text-[var(--text-primary)] mt-1">
+                {excelStats.anuladas}
+              </p>
+            </div>
+          </div>
+
+          <SolidCard className="p-6 space-y-4">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+              <div className="flex items-start gap-2.5">
+                <FileSpreadsheet className="w-5 h-5 text-[var(--accent-strong)] mt-0.5 shrink-0" />
+                <SectionTitle
+                  as="h2"
+                  size="sm"
+                  title="Órdenes de *Equilibrio Lite Excel*"
+                  subtitle="Cada compra confirmada genera un ID único (GROWY-XXXXXXXX) y envía la planilla personalizada por correo."
+                />
+              </div>
+
+              <button
+                type="button"
+                onClick={handleExportExcelOrdersCsv}
+                disabled={filteredExcelOrders.length === 0}
+                className="min-h-[42px] px-4 rounded-full border border-[var(--border-hairline)] bg-[var(--bg-soft-alt)] hover:bg-[var(--bg-soft)] disabled:opacity-50 text-xs font-bold text-[var(--text-primary)] inline-flex items-center gap-2 cursor-pointer shrink-0"
+              >
+                <Download className="w-4 h-4" />
+                <span>Exportar CSV ({filteredExcelOrders.length})</span>
+              </button>
+            </div>
+
+            <div className="flex flex-col sm:flex-row gap-3">
+              <div className="relative flex-1">
+                <Search className="w-4 h-4 text-[var(--text-secondary)] absolute left-3.5 top-1/2 -translate-y-1/2" />
+                <input
+                  type="search"
+                  placeholder="Buscar por nombre, correo o ID de licencia (GROWY-...)..."
+                  value={excelSearch}
+                  onChange={(e) => setExcelSearch(e.target.value)}
+                  className="boho-input w-full !rounded-full pl-10"
+                />
+              </div>
+              <select
+                value={excelStatusFilter}
+                onChange={(e) => setExcelStatusFilter(e.target.value as ExcelOrderStatus | 'all')}
+                aria-label="Filtrar órdenes Excel por estado"
+                className="boho-input text-xs font-semibold min-w-[200px]"
+              >
+                <option value="all">Todos los estados ({excelOrders.length})</option>
+                <option value="entregada">Entregadas ({excelStats.entregadas})</option>
+                <option value="pagada">Pagadas ({excelStats.pagadas})</option>
+                <option value="pendiente">Pendientes ({excelStats.pendientes})</option>
+                <option value="error_envio">Error de envío ({excelStats.errorEnvio})</option>
+                <option value="anulada">Anuladas ({excelStats.anuladas})</option>
+              </select>
+            </div>
+
+            {filteredExcelOrders.length === 0 ? (
+              <p className="text-sm text-[var(--text-secondary)] p-4 rounded-[20px] bg-[var(--bg-soft-alt)] border border-[var(--border-hairline)]">
+                No hay órdenes registradas que coincidan con el filtro actual.
+              </p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm text-left border-collapse min-w-[920px]">
+                  <thead>
+                    <tr className="border-b border-[var(--border-hairline)] text-xs text-[var(--text-secondary)]">
+                      <th className="py-2.5 pr-3">Comprador y licencia</th>
+                      <th className="py-2.5 px-3">Estado</th>
+                      <th className="py-2.5 px-3">Pago</th>
+                      <th className="py-2.5 px-3">Fechas y envíos</th>
+                      <th className="py-2.5 pl-3 text-right">Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[var(--border-hairline)]">
+                    {filteredExcelOrders.map((order) => {
+                      const canResend =
+                        order.status !== 'pendiente' && order.status !== 'anulada';
+                      const canCancel = order.status !== 'anulada';
+                      const statusStyle =
+                        order.status === 'entregada'
+                          ? 'bg-[var(--pos-soft)] text-[var(--pos-text)] border-[var(--pos-border)]'
+                          : order.status === 'error_envio'
+                            ? 'bg-[var(--danger-soft)] text-[var(--danger-text)] border-[var(--danger-border)]'
+                            : order.status === 'pagada'
+                              ? 'bg-[var(--sec-soft)] text-[var(--sec-text)] border-[var(--sec-border)]'
+                              : order.status === 'anulada'
+                                ? 'bg-[var(--bg-soft-alt)] text-[var(--text-secondary)] border-[var(--border-hairline)]'
+                                : 'bg-[var(--warn-soft)] text-[var(--warn-text)] border-[var(--warn-border)]';
+
+                      const statusText =
+                        order.status === 'entregada'
+                          ? 'Entregada'
+                          : order.status === 'error_envio'
+                            ? 'Error envío'
+                            : order.status === 'pagada'
+                              ? 'Pagada'
+                              : order.status === 'anulada'
+                                ? 'Anulada'
+                                : 'Pendiente';
+
+                      return (
+                        <tr key={order.id} className="align-top">
+                          <td className="py-3.5 pr-3 space-y-1">
+                            <p className="font-semibold text-[var(--text-primary)]">{order.name}</p>
+                            <p className="text-xs text-[var(--text-secondary)]">{order.email}</p>
+                            <div className="flex flex-wrap items-center gap-2 pt-0.5">
+                              <span className="font-mono text-xs font-bold px-2 py-0.5 rounded-lg bg-[var(--bg-soft-alt)] border border-[var(--border-hairline)] text-[var(--text-primary)]">
+                                {order.licenseId}
+                              </span>
+                              <span className="font-mono text-[11px] text-[var(--text-secondary)]">
+                                {order.id}
+                              </span>
+                            </div>
+                          </td>
+
+                          <td className="py-3.5 px-3 space-y-1.5">
+                            <span
+                              className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold border ${statusStyle}`}
+                            >
+                              {statusText}
+                            </span>
+                            {order.lastError && (
+                              <p className="text-[11px] text-[var(--danger-text)] max-w-[230px] leading-snug flex items-start gap-1">
+                                <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                                <span>{order.lastError}</span>
+                              </p>
+                            )}
+                          </td>
+
+                          <td className="py-3.5 px-3 font-mono text-xs space-y-1">
+                            <p className="font-bold text-[var(--text-primary)]">
+                              ${Math.round(order.amountCLP || 0).toLocaleString('es-CL')} CLP
+                            </p>
+                            <p className="text-[var(--text-secondary)]">
+                              Ref: {order.paymentReference || 'Sin ref. aún'}
+                            </p>
+                          </td>
+
+                          <td className="py-3.5 px-3 text-xs text-[var(--text-secondary)] space-y-0.5">
+                            <p>Creada: {formatOrderTimestamp(order.createdAt)}</p>
+                            <p>Pagada: {formatOrderTimestamp(order.paidAt)}</p>
+                            <p>Entregada: {formatOrderTimestamp(order.deliveredAt)}</p>
+                            <p className="font-mono text-[11px]">
+                              Intentos envío: {order.deliveryAttempts ?? 0}
+                            </p>
+                          </td>
+
+                          <td className="py-3.5 pl-3 text-right">
+                            <div className="flex flex-wrap justify-end gap-2">
+                              <button
+                                type="button"
+                                disabled={!canResend || resendingOrderId === order.id}
+                                title={
+                                  canResend
+                                    ? 'Generar/reenviar planilla personalizada al correo del comprador'
+                                    : 'Solo disponible para órdenes pagadas, entregadas o con error de envío'
+                                }
+                                onClick={() => handleResendExcelOrder(order)}
+                                className="min-h-[38px] px-3.5 rounded-full bg-[var(--sec-soft)] text-[var(--sec-text)] border border-[var(--sec-border)] disabled:opacity-45 text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer"
+                              >
+                                <RefreshCw
+                                  className={`w-3.5 h-3.5 ${
+                                    resendingOrderId === order.id ? 'animate-spin' : ''
+                                  }`}
+                                />
+                                <span>
+                                  {resendingOrderId === order.id ? 'Enviando...' : 'Reenviar'}
+                                </span>
+                              </button>
+
+                              {canCancel && confirmCancelOrderId !== order.id && (
+                                <button
+                                  type="button"
+                                  onClick={() => setConfirmCancelOrderId(order.id)}
+                                  className="min-h-[38px] px-3.5 rounded-full bg-[var(--danger-soft)] text-[var(--danger-text)] border border-[var(--danger-border)] text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer"
+                                >
+                                  <Ban className="w-3.5 h-3.5" />
+                                  <span>Anular</span>
+                                </button>
+                              )}
+
+                              {canCancel && confirmCancelOrderId === order.id && (
+                                <div className="flex items-center gap-1.5">
+                                  <button
+                                    type="button"
+                                    disabled={cancellingOrderId === order.id}
+                                    onClick={() => handleConfirmCancelExcelOrder(order)}
+                                    className="min-h-[38px] px-3 rounded-full bg-[var(--danger-text)] text-white text-xs font-bold cursor-pointer disabled:opacity-60"
+                                  >
+                                    {cancellingOrderId === order.id
+                                      ? 'Anulando...'
+                                      : 'Confirmar anular'}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setConfirmCancelOrderId(null)}
+                                    className="min-h-[38px] px-3 rounded-full border border-[var(--border-hairline)] text-xs font-semibold cursor-pointer"
+                                  >
+                                    Cancelar
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </SolidCard>
+
+          <form onSubmit={handleSaveExcelConfig} className="space-y-6">
+            <SolidCard className="p-6 space-y-5">
+              <SectionTitle
+                as="h2"
+                size="sm"
+                title="Configuración comercial y textos de *Equilibrio Lite Excel*"
+                subtitle="Edita el nombre, precio, visibilidad y textos de la sección sin tocar el código ni el flujo de Equilibrio."
+              />
+
+              <label className="flex items-center gap-3 p-4 rounded-[20px] bg-[var(--bg-soft-alt)] border border-[var(--border-hairline)] cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={draftConfig.excelActive !== false}
+                  onChange={(e) =>
+                    setDraftConfig({ ...draftConfig, excelActive: e.target.checked })
+                  }
+                  className="w-4 h-4 accent-[var(--accent-strong)]"
+                />
+                <div>
+                  <p className="text-sm font-bold text-[var(--text-primary)]">
+                    Mostrar sección Equilibrio Lite Excel en la landing
+                  </p>
+                  <p className="text-xs text-[var(--text-secondary)]">
+                    Si lo desmarcas, la sección pública y el botón de compra se ocultan automáticamente.
+                  </p>
+                </div>
+              </label>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div>
+                  <label className="block text-xs font-semibold mb-1">
+                    Nombre del producto (`excelProductName`)
+                  </label>
+                  <input
+                    type="text"
+                    value={draftConfig.excelProductName ?? 'Equilibrio Lite Excel'}
+                    onChange={(e) =>
+                      setDraftConfig({ ...draftConfig, excelProductName: e.target.value })
+                    }
+                    className="boho-input w-full"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold mb-1">
+                    Etiqueta de precio (`excelPriceLabel`)
+                  </label>
+                  <input
+                    type="text"
+                    value={draftConfig.excelPriceLabel ?? '$4.990 CLP · Pago único'}
+                    onChange={(e) =>
+                      setDraftConfig({ ...draftConfig, excelPriceLabel: e.target.value })
+                    }
+                    className="boho-input w-full"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold mb-1">
+                    Monto CLP (`excelPriceAmount`)
+                  </label>
+                  <input
+                    type="number"
+                    min={100}
+                    max={10000000}
+                    step={10}
+                    value={draftConfig.excelPriceAmount ?? 4990}
+                    onChange={(e) =>
+                      setDraftConfig({
+                        ...draftConfig,
+                        excelPriceAmount: Number(e.target.value) || 0,
+                      })
+                    }
+                    className="boho-input w-full font-mono"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold mb-1">
+                    Link Mercado Pago respaldo (`excelPaymentUrl`)
+                  </label>
+                  <input
+                    type="url"
+                    placeholder="Opcional si usas Preferencias en servidor"
+                    value={draftConfig.excelPaymentUrl ?? ''}
+                    onChange={(e) =>
+                      setDraftConfig({ ...draftConfig, excelPaymentUrl: e.target.value })
+                    }
+                    className="boho-input w-full"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-3 border-t border-[var(--border-hairline)]">
+                <div>
+                  <label className="block text-xs font-semibold mb-1">Antetítulo sección</label>
+                  <input
+                    type="text"
+                    value={draftLanding.excelEyebrow}
+                    onChange={(e) => updateLandingField('excelEyebrow', e.target.value)}
+                    className="boho-input w-full"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold mb-1">Título principal sección</label>
+                  <input
+                    type="text"
+                    value={draftLanding.excelTitle}
+                    onChange={(e) => updateLandingField('excelTitle', e.target.value)}
+                    className="boho-input w-full"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold mb-1">Descripción / Qué es</label>
+                <textarea
+                  rows={2}
+                  value={draftLanding.excelSubtitle}
+                  onChange={(e) => updateLandingField('excelSubtitle', e.target.value)}
+                  className="boho-input w-full py-2"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold mb-1">Para quién es</label>
+                <textarea
+                  rows={2}
+                  value={draftLanding.excelAudienceText}
+                  onChange={(e) => updateLandingField('excelAudienceText', e.target.value)}
+                  className="boho-input w-full py-2"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold mb-1">
+                  Aviso visible de no reemplazo (tarjeta, checkout y guía)
+                </label>
+                <textarea
+                  rows={3}
+                  value={draftLanding.excelNonReplacementNotice}
+                  onChange={(e) =>
+                    updateLandingField('excelNonReplacementNotice', e.target.value)
+                  }
+                  className="boho-input w-full py-2"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold mb-1">Mensaje central puente</label>
+                <input
+                  type="text"
+                  value={draftLanding.excelBridgeQuote}
+                  onChange={(e) => updateLandingField('excelBridgeQuote', e.target.value)}
+                  className="boho-input w-full"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold mb-1">
+                  Qué incluye (una hoja o beneficio por línea)
+                </label>
+                <textarea
+                  rows={5}
+                  value={draftLanding.excelIncludesList}
+                  onChange={(e) => updateLandingField('excelIncludesList', e.target.value)}
+                  className="boho-input w-full py-2"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-semibold mb-1">Texto botón compra</label>
+                  <input
+                    type="text"
+                    value={draftLanding.excelCtaLabel}
+                    onChange={(e) => updateLandingField('excelCtaLabel', e.target.value)}
+                    className="boho-input w-full"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold mb-1">Texto enlace secundario</label>
+                  <input
+                    type="text"
+                    value={draftLanding.excelSecondaryLabel}
+                    onChange={(e) => updateLandingField('excelSecondaryLabel', e.target.value)}
+                    className="boho-input w-full"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold mb-1">
+                  Aviso tributario referencial
+                </label>
+                <textarea
+                  rows={2}
+                  value={draftLanding.excelTaxDisclaimer}
+                  onChange={(e) => updateLandingField('excelTaxDisclaimer', e.target.value)}
+                  className="boho-input w-full py-2"
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={savingExcelConfig}
+                style={{ backgroundColor: 'var(--btn-navy-bg)', color: 'var(--btn-navy-text)' }}
+                className="min-h-[46px] px-7 rounded-full text-sm font-bold cursor-pointer shadow-sm hover:opacity-92 transition-opacity disabled:opacity-60"
+              >
+                {savingExcelConfig
+                  ? 'Guardando...'
+                  : 'Guardar configuración de Equilibrio Lite Excel'}
+              </button>
+            </SolidCard>
+          </form>
+        </section>
       )}
 
       {/* BANDEJA DE SOPORTE (DUDAS Y SUGERENCIAS) */}

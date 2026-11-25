@@ -58,7 +58,7 @@ import {
   SolidCard,
   type FloatingNavItem,
 } from './components/design-system';
-import { createEmptyBusiness, createPublicBakeryCafeDemoBusiness } from './data/demoData';
+import { createEmptyBusiness } from './data/demoData';
 import {
   calculatePlanComparisonFromConfig,
   clearPublicBreakEvenDraft,
@@ -165,16 +165,6 @@ export default function App() {
       return false;
     }
   });
-  const [guestDemoMode, setGuestDemoMode] = useState<boolean>(() => {
-    try {
-      return new URLSearchParams(window.location.search).get('demo') === '1';
-    } catch {
-      return false;
-    }
-  });
-  const [guestDemoBusiness, setGuestDemoBusiness] = useState<BusinessWorkspace>(() =>
-    createPublicBakeryCafeDemoBusiness()
-  );
   const [openTicketsCount, setOpenTicketsCount] = useState(0);
   const [mpVerificationNotice, setMpVerificationNotice] = useState<string | null>(null);
   const [checkedMpPaymentId, setCheckedMpPaymentId] = useState<string | null>(null);
@@ -324,6 +314,7 @@ export default function App() {
   useEffect(() => {
     if (!authUid || !profile) return;
     const params = new URLSearchParams(window.location.search);
+    if (params.has('excel_order')) return;
     const mpId = params.get('payment_id') || params.get('collection_id');
     const mpStatus = params.get('status') || params.get('collection_status');
     if (!mpId || checkedMpPaymentId === mpId) return;
@@ -545,12 +536,10 @@ export default function App() {
 
   // Registrar paso de primer cálculo cuando el usuario entra a la calculadora de Equilibrio
   useEffect(() => {
-    if (activeTab === 'calculator' && (authUid || guestDemoMode) && !showLandingExplicit) {
-      void trackFunnelStepOncePerSession('first_calculation', {
-        source: guestDemoMode && !authUid ? 'demo' : 'app',
-      });
+    if (activeTab === 'calculator' && authUid && !showLandingExplicit) {
+      void trackFunnelStepOncePerSession('first_calculation', { source: 'app' });
     }
-  }, [activeTab, authUid, guestDemoMode, showLandingExplicit]);
+  }, [activeTab, authUid, showLandingExplicit]);
 
   const handleOpenAuthModal = () => {
     if (authUid) {
@@ -734,14 +723,6 @@ export default function App() {
     setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
   };
 
-  const handleStartGuestDemo = () => {
-    setGuestDemoBusiness(createPublicBakeryCafeDemoBusiness());
-    setGuestDemoMode(true);
-    setShowLandingExplicit(false);
-    setActiveTab('dashboard');
-    setDashboardSubTab('overview');
-  };
-
   // Vista de prueba interna (solo en entorno DEV con ?design-system=1)
   if (import.meta.env.DEV && designSystemMode && LazyDesignSystemShowcase) {
     return (
@@ -768,8 +749,8 @@ export default function App() {
     );
   }
 
-  // Estado inicial de carga Auth (si está en demo pública sin authUid, permitimos entrar directo)
-  if (!authReady && !guestDemoMode) {
+  // Estado inicial de carga Auth
+  if (!authReady) {
     return (
       <GrowyMotionRoot>
         <div className="relative min-h-screen flex items-center justify-center p-6 overflow-hidden">
@@ -792,10 +773,8 @@ export default function App() {
     );
   }
 
-  const isGuestDemoActive = !authUid && !unverifiedUser && guestDemoMode && !showLandingExplicit;
-
-  // 1. Landing pública de venta (sin login y sin modo demo activo, o si eligió volver a ver la landing)
-  if ((!authUid && !unverifiedUser && !isGuestDemoActive) || showLandingExplicit) {
+  // 1. Landing pública de venta (sin login, o si eligió volver a ver la landing)
+  if ((!authUid && !unverifiedUser) || showLandingExplicit) {
     return (
       <GrowyMotionRoot>
         <LandingPage
@@ -805,7 +784,6 @@ export default function App() {
           isSignedIn={Boolean(authUid)}
           onToggleTheme={handleToggleTheme}
           onLoginClick={handleOpenAuthModal}
-          onTryDemo={handleStartGuestDemo}
           authLoading={authLoading}
           authError={authError}
         />
@@ -823,7 +801,7 @@ export default function App() {
   }
 
   // 1B. Verificación obligatoria de correo (para cuentas creadas con correo y contraseña)
-  if (!isGuestDemoActive && !authUid && unverifiedUser) {
+  if (!authUid && unverifiedUser) {
     return (
       <GrowyMotionRoot>
         <EmailVerificationWall
@@ -838,7 +816,7 @@ export default function App() {
   }
 
   // Cargando perfil (solo cuando hay sesión Firebase)
-  if (!isGuestDemoActive && !profile) {
+  if (!profile) {
     return (
       <div className="relative min-h-screen flex items-center justify-center p-6 overflow-hidden">
         <BackdropBlobs />
@@ -851,7 +829,7 @@ export default function App() {
   }
 
   // 2. Pantalla de acceso pendiente, vencido o suspendido (solo para usuarios autenticados)
-  if (!isGuestDemoActive && profile && (profile.accessStatus !== 'active' || subStatus.isExpired)) {
+  if (profile.accessStatus !== 'active' || subStatus.isExpired) {
     return (
       <GrowyMotionRoot>
         <PendingAccessView
@@ -867,7 +845,7 @@ export default function App() {
   }
 
   // 3. Elección obligatoria de día de pago mensual (5, 15 o 30) al iniciar sesión por primera vez
-  if (!isGuestDemoActive && profile && !subStatus.isExemptAdmin && !subStatus.hasBillingDay) {
+  if (!subStatus.isExemptAdmin && !subStatus.hasBillingDay) {
     const previewDue = billingDayPick ? computeInitialNextDueDate(billingDayPick) : null;
     const handleConfirmBillingDay = async () => {
       if (!billingDayPick) {
@@ -1020,8 +998,8 @@ export default function App() {
     );
   }
 
-  // Cargando espacios de trabajo (solo para sesiones autenticadas)
-  if (!isGuestDemoActive && (!businessesLoaded || businesses.length === 0)) {
+  // Cargando espacios de trabajo
+  if (!businessesLoaded || businesses.length === 0) {
     return (
       <div className="relative min-h-screen flex items-center justify-center p-6 overflow-hidden">
         <BackdropBlobs />
@@ -1035,16 +1013,13 @@ export default function App() {
     );
   }
 
-  const effectiveBusinesses = isGuestDemoActive ? [guestDemoBusiness] : businesses;
-  const activeBusiness = isGuestDemoActive
-    ? guestDemoBusiness
-    : businesses.find((b) => b.id === activeBusinessId) ?? businesses[0];
+  const activeBusiness = businesses.find((b) => b.id === activeBusinessId) ?? businesses[0];
   const isDark = theme === 'dark';
 
   const appStateSnapshot: AppStorageState = {
     version: 2,
     activeBusinessId: activeBusiness.id,
-    businesses: effectiveBusinesses,
+    businesses,
     theme,
     colorTone,
   };
@@ -1055,17 +1030,11 @@ export default function App() {
       ...patch,
       updatedAt: new Date().toISOString(),
     };
-    if (isGuestDemoActive) {
-      setGuestDemoBusiness(updated);
-      return;
-    }
-    if (!profile) return;
     setBusinesses((prev) => prev.map((b) => (b.id === updated.id ? updated : b)));
     saveUserBusiness(profile.uid, updated, false);
   };
 
   const handleCreateBusiness = async (name: string) => {
-    if (isGuestDemoActive || !profile) return;
     const fresh = { ...createEmptyBusiness(name), ownerUid: profile.uid };
     setBusinesses((prev) => [...prev, fresh]);
     setActiveBusinessId(fresh.id);
@@ -1073,7 +1042,6 @@ export default function App() {
   };
 
   const handleDuplicateBusiness = async () => {
-    if (isGuestDemoActive || !profile) return;
     const copy: BusinessWorkspace = {
       ...JSON.parse(JSON.stringify(activeBusiness)),
       id: `biz-${Date.now()}`,
@@ -1088,7 +1056,7 @@ export default function App() {
   };
 
   const handleDeleteBusiness = async (id: string) => {
-    if (isGuestDemoActive || !profile || businesses.length <= 1) return;
+    if (businesses.length <= 1) return;
     const remaining = businesses.filter((b) => b.id !== id);
     setBusinesses(remaining);
     if (activeBusinessId === id) {
@@ -1098,12 +1066,6 @@ export default function App() {
   };
 
   const handleClearDemoData = async () => {
-    if (isGuestDemoActive) {
-      setGuestDemoBusiness(createEmptyBusiness('Negocio de prueba'));
-      setActiveTab('catalog');
-      return;
-    }
-    if (!profile) return;
     const blank = { ...createEmptyBusiness('Mi Negocio'), ownerUid: profile.uid };
     for (const old of businesses) {
       await deleteUserBusiness(profile.uid, old.id);
@@ -1115,12 +1077,6 @@ export default function App() {
   };
 
   const handleRestoreDemoData = async () => {
-    if (isGuestDemoActive) {
-      setGuestDemoBusiness(createPublicBakeryCafeDemoBusiness());
-      setActiveTab('dashboard');
-      return;
-    }
-    if (!profile) return;
     const demos = await seedDemoBusinessesForUser(profile.uid);
     setBusinesses(demos);
     setActiveBusinessId(demos[0].id);
@@ -1128,7 +1084,6 @@ export default function App() {
   };
 
   const handleImportState = async (imported: AppStorageState) => {
-    if (isGuestDemoActive || !profile) return;
     for (const biz of imported.businesses) {
       await saveUserBusiness(profile.uid, { ...biz, ownerUid: profile.uid }, false);
     }
@@ -1220,21 +1175,19 @@ export default function App() {
           extraRightSlot={
             <div className="flex items-center gap-1">
               <PWAInstallButton compact />
-              {!isGuestDemoActive && (
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('faq')}
-                  aria-label="Ayuda y FAQ"
-                  title="Ayuda y preguntas frecuentes"
-                  className={`min-w-[38px] min-h-[38px] rounded-full flex items-center justify-center transition-colors cursor-pointer ${
-                    activeTab === 'faq'
-                      ? 'bg-[var(--bg-soft)] text-[var(--text-primary)]'
-                      : 'text-[var(--text-secondary)] hover:bg-[var(--bg-soft)]'
-                  }`}
-                >
-                  <HelpCircle className="w-4 h-4" />
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={() => setActiveTab('faq')}
+                aria-label="Ayuda y FAQ"
+                title="Ayuda y preguntas frecuentes"
+                className={`min-w-[38px] min-h-[38px] rounded-full flex items-center justify-center transition-colors cursor-pointer ${
+                  activeTab === 'faq'
+                    ? 'bg-[var(--bg-soft)] text-[var(--text-primary)]'
+                    : 'text-[var(--text-secondary)] hover:bg-[var(--bg-soft)]'
+                }`}
+              >
+                <HelpCircle className="w-4 h-4" />
+              </button>
               <button
                 type="button"
                 onClick={() => setActiveTab('settings')}
@@ -1248,7 +1201,7 @@ export default function App() {
               >
                 <Settings2 className="w-4 h-4" />
               </button>
-              {!isGuestDemoActive && profile?.role === 'admin' && (
+              {profile.role === 'admin' && (
                 <button
                   type="button"
                   onClick={() => setActiveTab('admin')}
@@ -1270,18 +1223,11 @@ export default function App() {
               )}
             </div>
           }
-          primaryAction={
-            isGuestDemoActive
-              ? {
-                  label: 'Entrar',
-                  onClick: handleOpenAuthModal,
-                }
-              : {
-                  label: profile?.displayName?.split(/\s+/)[0] || 'Mi cuenta',
-                  avatarInitials: userInitials,
-                  onClick: () => setActiveTab('settings'),
-                }
-          }
+          primaryAction={{
+            label: profile.displayName?.split(/\s+/)[0] || 'Mi cuenta',
+            avatarInitials: userInitials,
+            onClick: () => setActiveTab('settings'),
+          }}
         />
 
         {/* CONTENIDO PRINCIPAL */}
@@ -1308,7 +1254,7 @@ export default function App() {
                   onChange={(e) => setActiveBusinessId(e.target.value)}
                   className="boho-input !py-1.5 !px-3.5 !min-h-[36px] !rounded-full text-xs font-semibold max-w-[230px] sm:max-w-[270px]"
                 >
-                  {effectiveBusinesses.map((b) => (
+                  {businesses.map((b) => (
                     <option key={b.id} value={b.id}>
                       {b.name}
                     </option>
@@ -1378,20 +1324,18 @@ export default function App() {
                   >
                     <Apple className="w-4 h-4" />
                   </button>
-                  {!isGuestDemoActive && (
-                    <button
-                      type="button"
-                      onClick={() => setActiveTab('faq')}
-                      aria-label="Ayuda y FAQ"
-                      className={`min-w-[34px] min-h-[34px] rounded-full flex items-center justify-center cursor-pointer ${
-                        activeTab === 'faq'
-                          ? 'bg-[var(--bg-soft)] text-[var(--accent-strong)]'
-                          : 'text-[var(--text-secondary)]'
-                      }`}
-                    >
-                      <HelpCircle className="w-4 h-4" />
-                    </button>
-                  )}
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('faq')}
+                    aria-label="Ayuda y FAQ"
+                    className={`min-w-[34px] min-h-[34px] rounded-full flex items-center justify-center cursor-pointer ${
+                      activeTab === 'faq'
+                        ? 'bg-[var(--bg-soft)] text-[var(--accent-strong)]'
+                        : 'text-[var(--text-secondary)]'
+                    }`}
+                  >
+                    <HelpCircle className="w-4 h-4" />
+                  </button>
                   <button
                     type="button"
                     onClick={() => setActiveTab('settings')}
@@ -1404,7 +1348,7 @@ export default function App() {
                   >
                     <Settings2 className="w-4 h-4" />
                   </button>
-                  {!isGuestDemoActive && profile?.role === 'admin' && (
+                  {profile.role === 'admin' && (
                     <button
                       type="button"
                       onClick={() => setActiveTab('admin')}
@@ -1440,18 +1384,16 @@ export default function App() {
                   Portada
                 </button>
 
-                {!isGuestDemoActive && (
-                  <button
-                    type="button"
-                    onClick={handleSignOut}
-                    title="Cerrar sesión"
-                    aria-label="Cerrar sesión"
-                    className="min-h-[34px] px-3 rounded-full border border-[var(--border-hairline)] bg-[var(--bg-surface)] text-[11px] font-semibold text-[var(--text-secondary)] hover:text-[var(--danger-text)] inline-flex items-center gap-1.5 cursor-pointer transition-colors"
-                  >
-                    <LogOut className="w-3.5 h-3.5" />
-                    <span className="hidden sm:inline">Salir</span>
-                  </button>
-                )}
+                <button
+                  type="button"
+                  onClick={handleSignOut}
+                  title="Cerrar sesión"
+                  aria-label="Cerrar sesión"
+                  className="min-h-[34px] px-3 rounded-full border border-[var(--border-hairline)] bg-[var(--bg-surface)] text-[11px] font-semibold text-[var(--text-secondary)] hover:text-[var(--danger-text)] inline-flex items-center gap-1.5 cursor-pointer transition-colors"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Salir</span>
+                </button>
               </div>
             </div>
 
@@ -1577,52 +1519,8 @@ export default function App() {
               </SolidCard>
             )}
 
-            {/* Banner claro de Demo pública sin registro */}
-            {isGuestDemoActive && (
-              <SolidCard
-                className="mb-5 p-4 !bg-[var(--pos-soft)] !border-[var(--pos-border)] flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs"
-              >
-                <div className="space-y-0.5">
-                  <p className="font-bold text-[var(--pos-text)]">
-                    Modo demo navegable · Datos de ejemplo (Cafetería &amp; Repostería Canela y Vainilla)
-                  </p>
-                  <p className="text-[var(--text-secondary)]">
-                    Estás recorriendo Equilibrio sin registrarte. Puedes editar cifras para probar, pero{' '}
-                    <strong>nada se guarda en la nube todavía</strong>.
-                  </p>
-                </div>
-                <div className="flex flex-wrap items-center gap-2 shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => setGuestDemoBusiness(createPublicBakeryCafeDemoBusiness())}
-                    className="min-h-[36px] px-4 rounded-full border border-[var(--border-hairline)] bg-[var(--bg-surface)] text-xs font-semibold hover:bg-[var(--bg-soft)] cursor-pointer"
-                  >
-                    Reiniciar ejemplo
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setGuestDemoMode(false);
-                      setShowLandingExplicit(false);
-                    }}
-                    className="min-h-[36px] px-4 rounded-full border border-[var(--border-hairline)] bg-[var(--bg-surface)] text-xs font-semibold hover:bg-[var(--bg-soft)] cursor-pointer"
-                  >
-                    Volver a portada
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleOpenAuthModal}
-                    style={{ backgroundColor: 'var(--btn-navy-bg)', color: 'var(--btn-navy-text)' }}
-                    className="min-h-[36px] px-5 rounded-full text-xs font-bold cursor-pointer hover:opacity-92 transition-opacity"
-                  >
-                    Entrar / Crear cuenta
-                  </button>
-                </div>
-              </SolidCard>
-            )}
-
             {/* Aviso de negocio de ejemplo (solo usuarios autenticados) */}
-            {!isGuestDemoActive && activeBusiness.isDemo && (
+            {activeBusiness.isDemo && (
               <SolidCard
                 className="mb-5 p-4 flex flex-wrap items-center justify-between gap-3 text-xs"
               >
@@ -1691,7 +1589,7 @@ export default function App() {
                 />
               )}
 
-              {activeTab === 'faq' && !isGuestDemoActive && profile && (
+              {activeTab === 'faq' && (
                 <FaqAndSupportView
                   faqs={faqs}
                   profile={profile}
@@ -1704,10 +1602,10 @@ export default function App() {
                   <BusinessSettingsView
                     state={appStateSnapshot}
                     activeBusiness={activeBusiness}
-                    profile={profile ?? undefined}
+                    profile={profile}
                     appConfig={appConfig}
                     paymentHistory={paymentHistory}
-                    pushNotifications={profile ? pushNotifications : undefined}
+                    pushNotifications={pushNotifications}
                     colorTone={colorTone}
                     isDark={isDark}
                     onChangeColorTone={setColorTone}
@@ -1720,7 +1618,7 @@ export default function App() {
                     onClearDemoData={handleClearDemoData}
                     onRestoreDemoData={handleRestoreDemoData}
                     onImportState={handleImportState}
-                    onReplayOnboardingTour={profile ? () => setShowOnboardingTour(true) : undefined}
+                    onReplayOnboardingTour={() => setShowOnboardingTour(true)}
                   />
                   <div className="flex flex-wrap gap-3">
                     <button
@@ -1730,69 +1628,56 @@ export default function App() {
                     >
                       Ver landing de presentación
                     </button>
-                    {isGuestDemoActive ? (
-                      <button
-                        type="button"
-                        onClick={handleOpenAuthModal}
-                        style={{ backgroundColor: 'var(--btn-navy-bg)', color: 'var(--btn-navy-text)' }}
-                        className="min-h-[44px] px-6 rounded-full text-xs font-bold cursor-pointer hover:opacity-92 transition-opacity"
-                      >
-                        Entrar y guardar mi propio negocio
-                      </button>
-                    ) : profile ? (
-                      <button
-                        type="button"
-                        onClick={handleSignOut}
-                        className="min-h-[44px] px-6 rounded-full border border-[var(--accent-soft-border)] text-[var(--danger-text)] text-xs font-semibold hover:bg-[var(--danger-soft)] cursor-pointer transition-colors"
-                      >
-                        Cerrar sesión ({profile.email})
-                      </button>
-                    ) : null}
+                    <button
+                      type="button"
+                      onClick={handleSignOut}
+                      className="min-h-[44px] px-6 rounded-full border border-[var(--accent-soft-border)] text-[var(--danger-text)] text-xs font-semibold hover:bg-[var(--danger-soft)] cursor-pointer transition-colors"
+                    >
+                      Cerrar sesión ({profile.email})
+                    </button>
                   </div>
                 </div>
               )}
 
-              {activeTab === 'admin' && !isGuestDemoActive && profile?.role === 'admin' && (
+              {activeTab === 'admin' && profile.role === 'admin' && (
                 <AdminView adminProfile={profile} appConfig={appConfig} />
               )}
             </ViewTransition>
 
             {/* APARTADO INFERIOR PERMANENTE DE AYUDA, CONSULTAS Y ADJUNTOS */}
-            {!isGuestDemoActive && profile && (
-              <footer className="mt-10 pt-5 border-t border-[var(--border-hairline)]">
-                <div className="growy-editorial-strip p-5 sm:p-7 rounded-[32px] flex flex-col md:flex-row md:items-center md:justify-between gap-5 shadow-xs">
-                  <div className="flex items-start gap-3.5 min-w-0">
-                    <div className="w-10 h-10 rounded-full bg-white/10 border border-white/15 flex items-center justify-center shrink-0 mt-0.5">
-                      <HelpCircle className="w-4 h-4 text-[#F6A59E]" />
-                    </div>
-                    <div className="space-y-1 min-w-0">
-                      <p className="font-display text-lg font-extrabold text-white tracking-tight">
-                        <EditorialText text="¿Necesitas *ayuda* o quieres comentarnos algo?" />
-                      </p>
-                      <p className="text-xs text-[#CFC5EE] leading-relaxed">
-                        Si ya contrataste tu plan ($5.990 mensual o $50.000 anual) y tienes alguna
-                        consulta, sugerencia o necesitas asistencia, escríbenos. Puedes adjuntar
-                        documentos o capturas directamente para el administrador ({appConfig.contactEmail}).
-                      </p>
-                    </div>
+            <footer className="mt-10 pt-5 border-t border-[var(--border-hairline)]">
+              <div className="growy-editorial-strip p-5 sm:p-7 rounded-[32px] flex flex-col md:flex-row md:items-center md:justify-between gap-5 shadow-xs">
+                <div className="flex items-start gap-3.5 min-w-0">
+                  <div className="w-10 h-10 rounded-full bg-white/10 border border-white/15 flex items-center justify-center shrink-0 mt-0.5">
+                    <HelpCircle className="w-4 h-4 text-[#F6A59E]" />
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => setShowProblemModal(true)}
-                    className="w-full md:w-auto min-h-[46px] px-6 rounded-full bg-[#F6A59E] hover:opacity-92 text-[#1F1B2E] text-xs font-bold inline-flex items-center justify-center gap-2 cursor-pointer whitespace-nowrap shrink-0 transition-opacity"
-                  >
-                    <HelpCircle className="w-3.5 h-3.5 shrink-0" />
-                    <span>Escribir y adjuntar</span>
-                  </button>
+                  <div className="space-y-1 min-w-0">
+                    <p className="font-display text-lg font-extrabold text-white tracking-tight">
+                      <EditorialText text="¿Necesitas *ayuda* o quieres comentarnos algo?" />
+                    </p>
+                    <p className="text-xs text-[#CFC5EE] leading-relaxed">
+                      Si ya contrataste tu plan ($5.990 mensual o $50.000 anual) y tienes alguna
+                      consulta, sugerencia o necesitas asistencia, escríbenos. Puedes adjuntar
+                      documentos o capturas directamente para el administrador ({appConfig.contactEmail}).
+                    </p>
+                  </div>
                 </div>
-              </footer>
-            )}
+                <button
+                  type="button"
+                  onClick={() => setShowProblemModal(true)}
+                  className="w-full md:w-auto min-h-[46px] px-6 rounded-full bg-[#F6A59E] hover:opacity-92 text-[#1F1B2E] text-xs font-bold inline-flex items-center justify-center gap-2 cursor-pointer whitespace-nowrap shrink-0 transition-opacity"
+                >
+                  <HelpCircle className="w-3.5 h-3.5 shrink-0" />
+                  <span>Escribir y adjuntar</span>
+                </button>
+              </div>
+            </footer>
           </div>
         </main>
 
         {/* MODAL PARA REPORTE DE PROBLEMAS CON ADJUNTOS */}
         <AnimatePresence>
-          {showProblemModal && !isGuestDemoActive && profile && (
+          {showProblemModal && (
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -1823,26 +1708,24 @@ export default function App() {
           )}
         </AnimatePresence>
 
-        {!isGuestDemoActive && profile && (
-          <OnboardingTourModal
-            open={showOnboardingTour}
-            userName={profile.displayName}
-            onNavigate={handleNavigate}
-            onComplete={() => {
-              setShowOnboardingTour(false);
-              void trackFunnelStepOncePerSession('onboarding', { source: 'app' });
-              try {
-                localStorage.setItem(`growy_onboarding_done_${profile.uid}`, '1');
-              } catch {
-                // Ignorar
-              }
-              setProfile((prev) => (prev ? { ...prev, onboardingCompleted: true } : prev));
-              if (profile.onboardingCompleted !== true) {
-                void markUserOnboardingCompleted(profile.uid).catch(() => {});
-              }
-            }}
-          />
-        )}
+        <OnboardingTourModal
+          open={showOnboardingTour}
+          userName={profile.displayName}
+          onNavigate={handleNavigate}
+          onComplete={() => {
+            setShowOnboardingTour(false);
+            void trackFunnelStepOncePerSession('onboarding', { source: 'app' });
+            try {
+              localStorage.setItem(`growy_onboarding_done_${profile.uid}`, '1');
+            } catch {
+              // Ignorar
+            }
+            setProfile((prev) => (prev ? { ...prev, onboardingCompleted: true } : prev));
+            if (profile.onboardingCompleted !== true) {
+              void markUserOnboardingCompleted(profile.uid).catch(() => {});
+            }
+          }}
+        />
 
         <AuthModal
           open={authModalOpen}

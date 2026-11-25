@@ -1,4 +1,5 @@
 import React from 'react';
+import { motion, useReducedMotion } from 'motion/react';
 
 export const GrowyLogoMark: React.FC<{
   showSlogan?: boolean;
@@ -30,7 +31,10 @@ export const GrowyLogoMark: React.FC<{
 };
 
 /**
- * Ícono oficial del producto Equilibrio — incrustado TAL CUAL desde el archivo adjunto.
+ * Ícono renovado del producto Equilibrio (Cálido editorial):
+ * fondo blanco limpio (compatible con iOS/Safari sin variables CSS en gradientes SVG),
+ * arco de apoyo en azul noche con portal coral, balanza nivelada con peso lila y moneda salvia,
+ * y la chispa dorada característica de Equilibrio.
  */
 export const EquilibrioProductIcon: React.FC<{
   size?: 'xs' | 'sm' | 'md' | 'lg';
@@ -49,18 +53,90 @@ export const EquilibrioProductIcon: React.FC<{
     <div
       className={`inline-flex items-center justify-center shrink-0 select-none ${sizeClass} ${className}`}
     >
-      <img
-        src="/assets/aistudio/equilibrio-chispa-claro_8dfad465.svg"
-        alt="Ícono del producto Equilibrio"
-        className="w-full h-full object-contain drop-shadow-sm block"
-        draggable={false}
-        referrerPolicy="no-referrer"
-      />
+      <svg
+        viewBox="0 0 512 512"
+        fill="none"
+        xmlns="http://www.w3.org/2000/svg"
+        role="img"
+        aria-label="Ícono del producto Equilibrio"
+        className="w-full h-full block drop-shadow-sm"
+      >
+        {/* Contenedor squircle con fondo blanco puro */}
+        <rect x="16" y="16" width="480" height="480" rx="136" fill="#FFFFFF" />
+        <rect
+          x="20"
+          y="20"
+          width="472"
+          height="472"
+          rx="132"
+          stroke="#1F1B2E"
+          strokeOpacity="0.14"
+          strokeWidth="8"
+        />
+
+        {/* Base sólida + arco central de equilibrio */}
+        <path
+          d="M152 388H360"
+          stroke="#1F1B2E"
+          strokeWidth="28"
+          strokeLinecap="round"
+        />
+        <path
+          d="M206 388V292A50 50 0 0 1 306 292V388Z"
+          fill="#1F1B2E"
+        />
+        <path
+          d="M238 388V326A18 18 0 0 1 274 326V388Z"
+          fill="#F6A59E"
+        />
+
+        {/* Viga nivelada del punto de equilibrio */}
+        <path
+          d="M120 234H392"
+          stroke="#1F1B2E"
+          strokeWidth="26"
+          strokeLinecap="round"
+        />
+        <path
+          d="M144 234V204M368 234V204"
+          stroke="#1F1B2E"
+          strokeWidth="20"
+          strokeLinecap="round"
+        />
+
+        {/* Peso izquierdo (lila suave) y peso derecho (salvia) */}
+        <circle
+          cx="144"
+          cy="182"
+          r="34"
+          fill="#EDEAF8"
+          stroke="#1F1B2E"
+          strokeWidth="20"
+        />
+        <circle
+          cx="368"
+          cy="182"
+          r="34"
+          fill="#BFE0CC"
+          stroke="#1F1B2E"
+          strokeWidth="20"
+        />
+
+        {/* Chispa dorada característica de Equilibrio */}
+        <path
+          d="M256 76C262 110 272 120 306 126C272 132 262 142 256 176C250 142 240 132 206 126C240 120 250 110 256 76Z"
+          fill="#F3C26B"
+          stroke="#1F1B2E"
+          strokeWidth="16"
+          strokeLinejoin="round"
+        />
+        <circle cx="332" cy="108" r="12" fill="#F6A59E" stroke="#1F1B2E" strokeWidth="8" />
+      </svg>
     </div>
   );
 };
 
-/** Logo completo del producto Equilibrio (ícono oficial + nombre del producto) */
+/** Logo completo del producto Equilibrio (ícono editorial + nombre del producto) */
 export const EquilibrioLogoMark: React.FC<{
   size?: 'sm' | 'md' | 'lg';
   subtitle?: string;
@@ -69,18 +145,23 @@ export const EquilibrioLogoMark: React.FC<{
   const iconSize = size === 'sm' ? 'xs' : size === 'lg' ? 'lg' : 'sm';
   const titleClass =
     size === 'sm'
-      ? 'text-sm font-bold'
+      ? 'text-sm font-extrabold'
       : size === 'lg'
-        ? 'text-2xl font-bold'
-        : 'text-base font-bold';
+        ? 'text-2xl font-extrabold'
+        : 'text-base font-extrabold';
 
   return (
     <div className={`inline-flex items-center gap-2.5 select-none ${className}`}>
       <EquilibrioProductIcon size={iconSize} />
       <div className="min-w-0 leading-tight">
-        <span className={`font-display tracking-tight text-[var(--text-primary)] block ${titleClass}`}>
-          Equilibrio
-        </span>
+        <div className="inline-flex items-baseline gap-1.5">
+          <span className={`font-display tracking-tight text-[var(--text-primary)] ${titleClass}`}>
+            Equilibrio
+          </span>
+          <span className="font-mono text-[10px] font-bold text-[var(--sec-text)] opacity-80">
+            01
+          </span>
+        </div>
         {subtitle && (
           <span className="text-[11px] font-medium text-[var(--sec-text)] block truncate">
             {subtitle}
@@ -182,61 +263,111 @@ export const BohoLeafMotif: React.FC<{ className?: string }> = ({
 
 /**
  * Personaje oficial de GROWy. — incrustado TAL CUAL desde el archivo adjunto,
- * sin redibujar ni alterar sus trazos o proporciones.
+ * sin redibujar ni alterar sus trazos o proporciones, con flotación GPU suave
+ * y halo cálido sincronizado en la ampolleta.
  */
 export const GrowyCharacterArtwork: React.FC<{ className?: string }> = ({
   className = 'w-full max-w-[330px] mx-auto block select-none',
-}) => (
-  <div className={`relative ${className}`}>
-    {/* Resplandor dorado suave detrás de la ampolleta */}
-    <span
-      aria-hidden="true"
-      className="pointer-events-none absolute z-0 rounded-full growy-bulb-halo"
-      style={{
-        left: '28.3%',
-        top: '31.5%',
-        width: '25%',
-        aspectRatio: '1 / 1',
-        background:
-          'radial-gradient(circle, rgba(255, 224, 102, 0.95) 0%, rgba(251, 211, 92, 0.55) 42%, rgba(251, 211, 92, 0) 74%)',
-        filter: 'blur(9px)',
+}) => {
+  const prefersReducedMotion = useReducedMotion();
+
+  return (
+    <motion.div
+      className={`relative ${className}`}
+      initial={prefersReducedMotion ? false : { y: 3 }}
+      animate={prefersReducedMotion ? undefined : { y: -4 }}
+      transition={{
+        duration: 2.8,
+        repeat: Infinity,
+        repeatType: 'mirror',
+        ease: 'easeInOut',
       }}
-    />
-    <img
-      src="/assets/aistudio/image_18d9f62a.png"
-      alt="Personaje oficial de GROWy.: criatura lila con brote de dos hojas en equilibrio sobre una moneda, sosteniendo una ampolleta de idea y monedas de crecimiento"
-      className="relative z-10 w-full h-auto block select-none"
-      draggable={false}
-      referrerPolicy="no-referrer"
-    />
-    {/* Destello cálido sobre el cristal de la ampolleta */}
-    <span
-      aria-hidden="true"
-      className="pointer-events-none absolute z-20 rounded-full mix-blend-screen growy-bulb-core"
-      style={{
-        left: '28.3%',
-        top: '30.8%',
-        width: '12.5%',
-        aspectRatio: '1 / 1',
-        background:
-          'radial-gradient(circle, rgba(255, 255, 236, 0.95) 0%, rgba(255, 228, 122, 0.72) 50%, rgba(255, 228, 122, 0) 78%)',
-      }}
-    />
-    <span
-      aria-hidden="true"
-      className="pointer-events-none absolute z-20 rounded-full mix-blend-screen growy-bulb-halo"
-      style={{
-        left: '28.3%',
-        top: '31.2%',
-        width: '21%',
-        aspectRatio: '1 / 1',
-        background:
-          'radial-gradient(circle, rgba(255, 238, 153, 0.6) 0%, rgba(249, 206, 92, 0.28) 48%, rgba(249, 206, 92, 0) 76%)',
-        filter: 'blur(6px)',
-      }}
-    />
-  </div>
-);
+      style={{ willChange: 'transform' }}
+    >
+      {/* Resplandor dorado independiente detrás de la ampolleta */}
+      <span
+        aria-hidden="true"
+        className="pointer-events-none absolute z-0"
+        style={{
+          left: '28.6%',
+          top: '32.4%',
+          width: '29%',
+          aspectRatio: '1 / 1',
+          transform: 'translate(-50%, -50%)',
+        }}
+      >
+        <motion.span
+          className="block w-full h-full rounded-full"
+          style={{
+            background:
+              'radial-gradient(circle, rgba(255, 224, 102, 0.88) 0%, rgba(251, 211, 92, 0.44) 40%, rgba(251, 211, 92, 0) 74%)',
+            willChange: 'transform, opacity',
+          }}
+          initial={prefersReducedMotion ? false : { scale: 0.9, opacity: 0.48 }}
+          animate={
+            prefersReducedMotion
+              ? undefined
+              : {
+                  scale: 1.2,
+                  opacity: 0.92,
+                }
+          }
+          transition={{
+            duration: 2.1,
+            repeat: Infinity,
+            repeatType: 'mirror',
+            ease: 'easeInOut',
+          }}
+        />
+      </span>
+
+      <img
+        src="/assets/aistudio/image_18d9f62a.png"
+        alt="Personaje oficial de GROWy.: criatura lila con brote de dos hojas en equilibrio sobre una moneda, sosteniendo una ampolleta de idea y monedas de crecimiento"
+        className="relative z-10 w-full h-auto block select-none"
+        draggable={false}
+        referrerPolicy="no-referrer"
+      />
+
+      {/* Destello cálido independiente sobre el cristal de la ampolleta */}
+      <span
+        aria-hidden="true"
+        className="pointer-events-none absolute z-20"
+        style={{
+          left: '28.6%',
+          top: '32.2%',
+          width: '17%',
+          aspectRatio: '1 / 1',
+          transform: 'translate(-50%, -50%)',
+        }}
+      >
+        <motion.span
+          className="block w-full h-full rounded-full"
+          style={{
+            background:
+              'radial-gradient(circle, rgba(255, 255, 236, 0.86) 0%, rgba(255, 228, 122, 0.48) 46%, rgba(255, 228, 122, 0) 76%)',
+            willChange: 'transform, opacity',
+          }}
+          initial={prefersReducedMotion ? false : { scale: 0.88, opacity: 0.3 }}
+          animate={
+            prefersReducedMotion
+              ? undefined
+              : {
+                  scale: 1.15,
+                  opacity: 0.84,
+                }
+          }
+          transition={{
+            duration: 2.1,
+            repeat: Infinity,
+            repeatType: 'mirror',
+            ease: 'easeInOut',
+          }}
+        />
+      </span>
+    </motion.div>
+  );
+};
 
 /** Doodle estilo mascota (contorno oscuro grueso y colores planos): ampolleta creativa */
 export const DoodleIdeaMotif: React.FC<{ className?: string }> = ({

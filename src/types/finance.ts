@@ -345,6 +345,16 @@ export interface LandingContentConfig {
   privacyBody: string;
   supportHumanTitle: string;
   supportHumanBody: string;
+  excelEyebrow: string;
+  excelTitle: string;
+  excelSubtitle: string;
+  excelAudienceText: string;
+  excelNonReplacementNotice: string;
+  excelBridgeQuote: string;
+  excelIncludesList: string;
+  excelCtaLabel: string;
+  excelSecondaryLabel: string;
+  excelTaxDisclaimer: string;
 }
 
 export interface TestimonialItem {
@@ -392,6 +402,11 @@ export interface AppConfig {
   welcomeMessage: string;
   announcementText: string;
   announcementActive: boolean;
+  excelProductName?: string;
+  excelPriceLabel?: string;
+  excelPriceAmount?: number;
+  excelPaymentUrl?: string;
+  excelActive?: boolean;
   landingContent?: Partial<LandingContentConfig>;
   updatedAt?: unknown;
 }
@@ -535,3 +550,27 @@ export interface PaymentHistoryEntry {
   createdAt?: unknown;
   updatedAt?: unknown;
 }
+
+export type ExcelOrderStatus =
+  | 'pendiente'
+  | 'pagada'
+  | 'entregada'
+  | 'error_envio'
+  | 'anulada';
+
+export interface ExcelOrderRecord {
+  id: string;
+  name: string;
+  email: string;
+  status: ExcelOrderStatus;
+  amountCLP: number;
+  paymentReference?: string;
+  licenseId: string;
+  termsAcceptedAt: string;
+  createdAt?: unknown;
+  paidAt?: string;
+  deliveredAt?: string;
+  deliveryAttempts: number;
+  lastError?: string;
+}
+

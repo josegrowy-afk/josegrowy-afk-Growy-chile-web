@@ -25,6 +25,11 @@
         "welcomeMessage": { "type": "string", "maxLength": 400 },
         "announcementText": { "type": "string", "maxLength": 300 },
         "announcementActive": { "type": "boolean" },
+        "excelProductName": { "type": "string", "maxLength": 120 },
+        "excelPriceLabel": { "type": "string", "maxLength": 60 },
+        "excelPriceAmount": { "type": "number" },
+        "excelPaymentUrl": { "type": "string", "maxLength": 500 },
+        "excelActive": { "type": "boolean" },
         "landingContent": {
           "type": "object",
           "description": "Textos editables de cada sección de la landing pública de Growy."
@@ -307,6 +312,30 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["id", "sessionId", "step", "day", "createdAt"]
+    },
+    "ExcelOrder": {
+      "title": "ExcelOrder",
+      "description": "Orden de compra única para Equilibrio Lite Excel ($4.990 CLP) con licencia personal e idempotencia de entrega.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "minLength": 2, "maxLength": 100 },
+        "email": { "type": "string", "minLength": 5, "maxLength": 160 },
+        "status": {
+          "type": "string",
+          "enum": ["pendiente", "pagada", "entregada", "error_envio", "anulada"]
+        },
+        "amountCLP": { "type": "number" },
+        "paymentReference": { "type": "string", "maxLength": 160 },
+        "licenseId": { "type": "string", "minLength": 6, "maxLength": 32, "pattern": "^GROWY-[A-Z0-9]{8}$" },
+        "termsAcceptedAt": { "type": "string", "maxLength": 40 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "paidAt": { "type": "string", "maxLength": 40 },
+        "deliveredAt": { "type": "string", "maxLength": 40 },
+        "deliveryAttempts": { "type": "number" },
+        "lastError": { "type": "string", "maxLength": 400 }
+      },
+      "required": ["id", "name", "email", "status", "amountCLP", "licenseId", "termsAcceptedAt", "createdAt", "deliveryAttempts"]
     }
   },
   "firestore": {
@@ -357,6 +386,10 @@
     "/funnelEvents/{eventId}": {
       "schema": { "$ref": "#/entities/FunnelEvent" },
       "description": "Eventos anónimos de embudo (visita, login, onboarding, primer cálculo, pago) sin cookies ni PII."
+    },
+    "/excelOrders/{orderId}": {
+      "schema": { "$ref": "#/entities/ExcelOrder" },
+      "description": "Órdenes de compra única de Equilibrio Lite Excel administradas desde el servidor (Admin SDK) y revisadas por administradores verificados."
     }
   }
 }

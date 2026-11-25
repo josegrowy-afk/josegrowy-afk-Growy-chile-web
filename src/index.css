@@ -123,6 +123,14 @@
     --chart-doughnut-3: #6fae8a;
     --chart-doughnut-4: #e9b949;
     --chart-doughnut-5: #cfc5ee;
+
+    --eq-icon-start: #f6a59e;
+    --eq-icon-mid: #f3c26b;
+    --eq-icon-end: #cfc5ee;
+    --eq-icon-rim: rgba(255, 247, 243, 0.88);
+    --eq-icon-ink: #1f1b2e;
+    --eq-icon-cream: #fff7f3;
+    --eq-icon-sage: #bfe0cc;
   }
 
   html.dark {
@@ -221,6 +229,14 @@
     --chart-doughnut-3: #6fae8a;
     --chart-doughnut-4: #f3d27a;
     --chart-doughnut-5: #cfc5ee;
+
+    --eq-icon-start: #df8d87;
+    --eq-icon-mid: #dfb264;
+    --eq-icon-end: #b3a7d8;
+    --eq-icon-rim: rgba(255, 247, 243, 0.45);
+    --eq-icon-ink: #1f1b2e;
+    --eq-icon-cream: #fff7f3;
+    --eq-icon-sage: #bfe0cc;
   }
 
   html.tone-formal {
@@ -314,6 +330,14 @@
     --chart-doughnut-3: #3f7a5c;
     --chart-doughnut-4: #b4474a;
     --chart-doughnut-5: #94a3b8;
+
+    --eq-icon-start: #edeaf8;
+    --eq-icon-mid: #e2e8f0;
+    --eq-icon-end: #cfc5ee;
+    --eq-icon-rim: rgba(31, 27, 46, 0.16);
+    --eq-icon-ink: #1f1b2e;
+    --eq-icon-cream: #ffffff;
+    --eq-icon-sage: #bfe0cc;
   }
 
   html.tone-formal.dark {
@@ -407,6 +431,14 @@
     --chart-doughnut-3: #6ee7b7;
     --chart-doughnut-4: #fcd34d;
     --chart-doughnut-5: #cfc5ee;
+
+    --eq-icon-start: #cfc5ee;
+    --eq-icon-mid: #94a3b8;
+    --eq-icon-end: #edeaf8;
+    --eq-icon-rim: rgba(255, 255, 255, 0.36);
+    --eq-icon-ink: #1f1b2e;
+    --eq-icon-cream: #ffffff;
+    --eq-icon-sage: #6ee7b7;
   }
 
   body {

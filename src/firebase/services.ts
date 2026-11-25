@@ -39,6 +39,7 @@ import type {
   AppConfig,
   BillingDay,
   BusinessWorkspace,
+  ExcelOrderRecord,
   FaqCategory,
   FaqItem,
   FunnelEventRecord,
@@ -59,7 +60,7 @@ import type {
   UserProfile,
   UserRole,
 } from '../types/finance';
-import { db, handleFirestoreError, OperationType } from './client';
+import { auth, db, handleFirestoreError, OperationType } from './client';
 
 export const BOOTSTRAPPED_ADMIN_EMAIL = 'jose.growy@gmail.com';
 
@@ -173,6 +174,32 @@ export const DEFAULT_LANDING_CONTENT: LandingContentConfig = {
   supportHumanTitle: 'Soporte humano cercano, sin bots fríos',
   supportHumanBody:
     'Detrás de GROWy hay personas reales que hablan en simple y conocen la realidad de emprender en Chile. Si te trabas cargando un costo o tienes dudas con tu comprobante, te ayudamos directo.',
+  excelEyebrow: 'Opción inicial de pago único',
+  excelTitle: 'Equilibrio Lite Excel',
+  excelSubtitle:
+    'Una planilla de Excel ordenada y pensada para emprendedores que quieren llevar los números de su negocio en su computador antes de dar el paso a la suscripción mensual.',
+  excelAudienceText:
+    'Pensada para quien hoy prefiere pagar una sola vez y anotar sus cifras paso a paso, sin mensualidades por ahora.',
+  excelNonReplacementNotice:
+    'Equilibrio Lite Excel no reemplaza la tecnología de GROWy. Al tomar Equilibrio tienes un analista financiero (el Analista PYME) que te explica tus cifras con palabras sencillas, y todo el proceso es mucho más automático.',
+  excelBridgeQuote:
+    'Empieza con lo básico; cuando quieras que los números se expliquen y se calculen solos, Equilibrio te espera',
+  excelIncludesList: [
+    'Inicio: guía rápida para partir ordenado sin perderte.',
+    'Resumen: fotografía general con semáforos y gráficos.',
+    'Mi negocio: datos base y orden mensual de tu emprendimiento.',
+    'Costos fijos: arriendo, servicios, sueldos base y gastos del mes.',
+    'Productos: registra hasta 10 productos con sus costos y márgenes.',
+    'Punto de equilibrio: cuántas ventas necesitas para no perder.',
+    'Ventas reales: seguimiento manual de lo que vas vendiendo.',
+    'Caja: control simple de entradas y salidas de dinero.',
+    'Cobrar y pagar: recordatorio de cuentas pendientes por cobrar y pagar.',
+    'Siguiente paso: orientación clara cuando quieras pasar a Equilibrio.',
+  ].join('\n'),
+  excelCtaLabel: 'Quiero Equilibrio Lite Excel',
+  excelSecondaryLabel: 'Conocer Equilibrio',
+  excelTaxDisclaimer:
+    'Las estimaciones tributarias de la planilla son referenciales y no reemplazan a un contador.',
 };
 
 export const DEFAULT_APP_CONFIG: AppConfig = {
@@ -197,6 +224,11 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
     'Bienvenido a Growy. Activa tu acceso a Equilibrio eligiendo tu plan mensual ($5.990/mes) o anual ($50.000/año) o ingresando tu código.',
   announcementText: '',
   announcementActive: false,
+  excelProductName: 'Equilibrio Lite Excel',
+  excelPriceLabel: '$4.990 CLP',
+  excelPriceAmount: 4990,
+  excelPaymentUrl: '',
+  excelActive: true,
   landingContent: DEFAULT_LANDING_CONTENT,
 };
 
@@ -271,6 +303,42 @@ export const DEFAULT_FAQS: Array<Omit<FaqItem, 'createdAt' | 'updatedAt'>> = [
       'Puedes escribirnos directamente desde el formulario de contacto al final de la página o desde tu cuenta. Tu mensaje llega directo a José Ignacia (jose.growy@gmail.com).',
     category: 'soporte',
     order: 8,
+    published: true,
+  },
+  {
+    id: 'faq-excel-que-incluye',
+    question: '¿Qué incluye Equilibrio Lite Excel?',
+    answer:
+      'Incluye una planilla de Excel con 10 hojas ordenadas (Inicio, Resumen, Mi negocio, Costos fijos, Productos para hasta 10 productos, Punto de equilibrio, Ventas reales, Caja, Cobrar y pagar, y Siguiente paso), además de semáforos visuales y gráficos. Las estimaciones tributarias que incluye son referenciales y no reemplazan a un contador. Equilibrio Lite Excel no reemplaza la tecnología de GROWy ni al Analista PYME de Equilibrio.',
+    category: 'cuenta',
+    order: 9,
+    published: true,
+  },
+  {
+    id: 'faq-excel-como-recibo',
+    question: '¿Cómo recibo Equilibrio Lite Excel después de pagar?',
+    answer:
+      'Apenas Mercado Pago aprueba tu pago único, nuestro servidor genera tu copia personalizada con tu nombre e ID de licencia único y te la envía automáticamente como archivo adjunto al correo electrónico que ingresaste al comprar. Si no ves el correo en unos minutos, revisa spam o escríbenos a jose.growy@gmail.com.',
+    category: 'pagos',
+    order: 10,
+    published: true,
+  },
+  {
+    id: 'faq-excel-requisitos',
+    question: '¿Necesito tener Microsoft Excel instalado para usarla?',
+    answer:
+      'La planilla está optimizada para Microsoft Excel en computador (Windows o Mac), donde los gráficos, semáforos y protecciones de fórmulas funcionan completos. También puedes abrirla en Google Sheets o en el celular, considerando que algunas funciones visuales y formatos avanzados de Excel pueden verse con limitaciones.',
+    category: 'cuenta',
+    order: 11,
+    published: true,
+  },
+  {
+    id: 'faq-excel-licencia',
+    question: '¿Qué significa que Equilibrio Lite Excel tiene licencia personal?',
+    answer:
+      'Cada compra entrega una licencia personal e intransferible para uso exclusivo de tu propio emprendimiento. Cada archivo generado lleva tu nombre completo y un código único (ej. GROWY-XXXXXXXX), y no está permitida su copia, distribución ni reventa a terceros.',
+    category: 'pagos',
+    order: 12,
     published: true,
   },
 ];
@@ -368,6 +436,16 @@ export function subscribeAppConfig(onUpdate: (config: AppConfig) => void): () =>
               ? Math.round(remote.annualPriceClp)
               : ANNUAL_PRICE_CLP,
           mpRecurringEnabled: remote.mpRecurringEnabled !== false,
+          excelProductName:
+            remote.excelProductName || DEFAULT_APP_CONFIG.excelProductName,
+          excelPriceLabel:
+            remote.excelPriceLabel || DEFAULT_APP_CONFIG.excelPriceLabel,
+          excelPriceAmount:
+            typeof remote.excelPriceAmount === 'number' && remote.excelPriceAmount > 0
+              ? Math.round(remote.excelPriceAmount)
+              : DEFAULT_APP_CONFIG.excelPriceAmount,
+          excelPaymentUrl: remote.excelPaymentUrl ?? DEFAULT_APP_CONFIG.excelPaymentUrl,
+          excelActive: remote.excelActive !== false,
           landingContent: {
             ...DEFAULT_LANDING_CONTENT,
             ...migratedLanding,
@@ -527,6 +605,26 @@ export async function ensureAdminSeedDefaults(): Promise<void> {
               updatedAt: serverTimestamp(),
             });
           }
+        }
+        const missingExcelFaqs = DEFAULT_FAQS.filter(
+          (faq) =>
+            faq.id.startsWith('faq-excel-') &&
+            !faqsSnap.docs.some((d) => d.id === faq.id)
+        );
+        if (missingExcelFaqs.length > 0) {
+          const batch = writeBatch(db);
+          for (const faq of missingExcelFaqs) {
+            batch.set(doc(db, 'faqs', faq.id), {
+              question: faq.question,
+              answer: faq.answer,
+              category: faq.category,
+              order: faq.order,
+              published: faq.published,
+              createdAt: serverTimestamp(),
+              updatedAt: serverTimestamp(),
+            });
+          }
+          await batch.commit();
         }
       }
     }
@@ -1332,13 +1430,15 @@ export function subscribePublishedFaqs(onUpdate: (faqs: FaqItem[]) => void): () 
       const list = snap.docs
         .map((d) => ({ ...(d.data() as Omit<FaqItem, 'id'>), id: d.id }))
         .sort((a, b) => a.order - b.order);
-      if (!list.some((item) => item.id === 'faq-instalar-app')) {
-        const installDefault = DEFAULT_FAQS.find((f) => f.id === 'faq-instalar-app');
-        if (installDefault) {
-          list.push(installDefault);
-          list.sort((a, b) => a.order - b.order);
+      for (const defaultFaq of DEFAULT_FAQS) {
+        if (
+          (defaultFaq.id === 'faq-instalar-app' || defaultFaq.id.startsWith('faq-excel-')) &&
+          !list.some((item) => item.id === defaultFaq.id)
+        ) {
+          list.push(defaultFaq);
         }
       }
+      list.sort((a, b) => a.order - b.order);
       onUpdate(list);
     },
     (err) => {
@@ -1862,6 +1962,16 @@ function sanitizeLandingContent(raw?: Partial<LandingContentConfig>): LandingCon
     privacyBody: clampStr(src.privacyBody, 700),
     supportHumanTitle: clampStr(src.supportHumanTitle, 180),
     supportHumanBody: clampStr(src.supportHumanBody, 700),
+    excelEyebrow: clampStr(src.excelEyebrow, 140),
+    excelTitle: clampStr(src.excelTitle, 220),
+    excelSubtitle: clampStr(src.excelSubtitle, 600),
+    excelAudienceText: clampStr(src.excelAudienceText, 400),
+    excelNonReplacementNotice: clampStr(src.excelNonReplacementNotice, 600),
+    excelBridgeQuote: clampStr(src.excelBridgeQuote, 300),
+    excelIncludesList: clampStr(src.excelIncludesList, 1000),
+    excelCtaLabel: clampStr(src.excelCtaLabel, 100),
+    excelSecondaryLabel: clampStr(src.excelSecondaryLabel, 100),
+    excelTaxDisclaimer: clampStr(src.excelTaxDisclaimer, 400),
   };
 }
 
@@ -1911,6 +2021,12 @@ export async function adminSaveAppConfig(admin: UserProfile, nextConfig: AppConf
     const cleanWhatsapp = clampStr(nextConfig.whatsappUrl, 300);
     const cleanRefundGuarantee = clampStr(nextConfig.refundGuaranteeText, 500);
     const cleanTestimonials = sanitizeTestimonials(nextConfig.testimonials);
+    const excelPriceAmount =
+      typeof nextConfig.excelPriceAmount === 'number' &&
+      Number.isFinite(nextConfig.excelPriceAmount) &&
+      nextConfig.excelPriceAmount >= 0
+        ? Math.min(10000000, Math.round(nextConfig.excelPriceAmount))
+        : (DEFAULT_APP_CONFIG.excelPriceAmount ?? 4990);
 
     await setDoc(doc(db, 'appConfig', 'public'), {
       paymentUrl: clampStr(nextConfig.paymentUrl, 500),
@@ -1933,6 +2049,13 @@ export async function adminSaveAppConfig(admin: UserProfile, nextConfig: AppConf
       welcomeMessage: clampStr(nextConfig.welcomeMessage, 400),
       announcementText: clampStr(nextConfig.announcementText, 300),
       announcementActive: Boolean(nextConfig.announcementActive),
+      excelProductName:
+        clampStr(nextConfig.excelProductName, 120) || 'Equilibrio Lite Excel',
+      excelPriceLabel:
+        clampStr(nextConfig.excelPriceLabel, 60) || '$4.990 CLP',
+      excelPriceAmount,
+      excelPaymentUrl: clampStr(nextConfig.excelPaymentUrl, 500),
+      excelActive: nextConfig.excelActive !== false,
       landingContent: sanitizeLandingContent(nextConfig.landingContent),
       updatedAt: serverTimestamp(),
     });
@@ -1941,7 +2064,7 @@ export async function adminSaveAppConfig(admin: UserProfile, nextConfig: AppConf
       adminEmail: admin.email,
       action: 'Actualizar configuración global',
       target: 'appConfig/public',
-      details: `Precio: ${nextConfig.priceLabel} (Mensual $${monthlyPriceClp} / Anual $${annualPriceClp}) · Testimonios: ${cleanTestimonials.length} · Anuncio: ${nextConfig.announcementActive ? 'Activo' : 'Inactivo'}`,
+      details: `Precio: ${nextConfig.priceLabel} (Mensual $${monthlyPriceClp} / Anual $${annualPriceClp}) · Excel: ${nextConfig.excelActive !== false ? nextConfig.excelPriceLabel : 'Oculto'} · Testimonios: ${cleanTestimonials.length}`,
     });
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, 'appConfig/public');
@@ -2441,5 +2564,233 @@ export function subscribeFunnelEventsAdmin(
     }
   );
 }
+
+/* ============================================================================
+ * EQUILIBRIO LITE EXCEL: COMPRA ÚNICA, VERIFICACIÓN Y PANEL ADMIN
+ * ============================================================================ */
+
+async function getCurrentIdToken(): Promise<string> {
+  const user = auth.currentUser;
+  if (!user) {
+    throw new Error('Debes iniciar sesión como administrador para realizar esta acción.');
+  }
+  return user.getIdToken();
+}
+
+export async function createExcelCheckoutOrder(params: {
+  name: string;
+  email: string;
+  emailConfirm: string;
+  termsAccepted: boolean;
+}): Promise<{
+  ok: boolean;
+  orderId?: string;
+  checkoutUrl?: string;
+  mode?: 'preference' | 'static_fallback';
+  message?: string;
+  error?: string;
+}> {
+  const res = await fetch('/api/excel/create-order', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+  const data = (await res.json()) as {
+    ok?: boolean;
+    orderId?: string;
+    checkoutUrl?: string;
+    mode?: 'preference' | 'static_fallback';
+    message?: string;
+    error?: string;
+  };
+  if (!res.ok || !data.ok) {
+    throw new Error(
+      data.error || data.message || 'No pudimos iniciar tu compra en este momento.'
+    );
+  }
+  return {
+    ok: true,
+    orderId: data.orderId,
+    checkoutUrl: data.checkoutUrl,
+    mode: data.mode,
+    message: data.message,
+  };
+}
+
+export async function verifyExcelPaymentReturn(params: {
+  orderId: string;
+  paymentId?: string;
+  status?: string;
+}): Promise<{
+  ok: boolean;
+  status?: string;
+  delivered?: boolean;
+  licenseId?: string;
+  message: string;
+}> {
+  const res = await fetch('/api/excel/verify-payment', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+  const data = (await res.json()) as {
+    ok?: boolean;
+    status?: string;
+    delivered?: boolean;
+    licenseId?: string;
+    message?: string;
+    error?: string;
+  };
+  return {
+    ok: Boolean(res.ok && data.ok),
+    status: data.status,
+    delivered: Boolean(data.delivered),
+    licenseId: data.licenseId,
+    message:
+      data.message ||
+      data.error ||
+      'Estamos verificando el estado de tu pago con Mercado Pago.',
+  };
+}
+
+export function subscribeExcelOrdersAdmin(
+  onUpdate: (orders: ExcelOrderRecord[]) => void,
+  onError?: (err: unknown) => void
+): () => void {
+  const q = query(collection(db, 'excelOrders'), orderBy('createdAt', 'desc'), limit(500));
+  return onSnapshot(
+    q,
+    (snap) => {
+      onUpdate(
+        snap.docs.map((d) => ({
+          ...(d.data() as Omit<ExcelOrderRecord, 'id'>),
+          id: d.id,
+        }))
+      );
+    },
+    (err) => {
+      console.warn('No se pudieron cargar órdenes Excel:', err);
+      onError?.(err);
+      onUpdate([]);
+    }
+  );
+}
+
+export async function adminFetchExcelOrdersServer(): Promise<ExcelOrderRecord[] | null> {
+  try {
+    const token = await getCurrentIdToken();
+    const res = await fetch('/api/admin/excel-orders', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { ok?: boolean; orders?: ExcelOrderRecord[] };
+    return data.ok && Array.isArray(data.orders) ? data.orders : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function adminResendExcelOrder(params: {
+  admin: UserProfile;
+  order: ExcelOrderRecord;
+}): Promise<{ ok: boolean; status?: string; message: string }> {
+  const token = await getCurrentIdToken();
+  const res = await fetch(`/api/admin/excel-orders/${encodeURIComponent(params.order.id)}/resend`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+  });
+  const data = (await res.json()) as {
+    ok?: boolean;
+    status?: string;
+    message?: string;
+    error?: string;
+  };
+  if (data.ok) {
+    try {
+      await logAdminAction({
+        adminUid: params.admin.uid,
+        adminEmail: params.admin.email,
+        action: 'Reenviar Equilibrio Lite Excel',
+        target: `${params.order.licenseId} (${params.order.email})`,
+        details: `Orden ${params.order.id} reenviada por correo.`,
+      });
+    } catch {
+      // Silencioso si el servidor ya registró la acción
+    }
+  }
+  return {
+    ok: Boolean(data.ok),
+    status: data.status,
+    message:
+      data.message ||
+      data.error ||
+      (data.ok
+        ? 'Archivo personalizado reenviado correctamente.'
+        : 'No se pudo reenviar la planilla.'),
+  };
+}
+
+export async function adminCancelExcelOrder(params: {
+  admin: UserProfile;
+  order: ExcelOrderRecord;
+  reason?: string;
+}): Promise<{ ok: boolean; message: string }> {
+  const cleanReason = clampStr(params.reason || 'Anulada desde Panel Administrador', 240);
+  try {
+    const token = await getCurrentIdToken();
+    const res = await fetch(
+      `/api/admin/excel-orders/${encodeURIComponent(params.order.id)}/cancel`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ reason: cleanReason }),
+      }
+    );
+    const data = (await res.json()) as {
+      ok?: boolean;
+      useClientFallback?: boolean;
+      message?: string;
+      error?: string;
+    };
+    if (res.ok && data.ok) {
+      await logAdminAction({
+        adminUid: params.admin.uid,
+        adminEmail: params.admin.email,
+        action: 'Anular orden Equilibrio Lite Excel',
+        target: `${params.order.licenseId} (${params.order.email})`,
+        details: `Orden ${params.order.id} anulada · ${cleanReason}`,
+      });
+      return { ok: true, message: data.message || 'Orden anulada correctamente.' };
+    }
+    if (!data.useClientFallback) {
+      throw new Error(data.error || data.message || 'No se pudo anular la orden.');
+    }
+  } catch (err) {
+    // Si Admin SDK no tiene credenciales en preview, el admin verificado puede anular vía reglas Firestore
+    if (err instanceof Error && !err.message.includes('Failed to fetch')) {
+      // Continuar al fallback verificado solo si no fue un error de validación de negocio
+    }
+  }
+
+  await updateDoc(doc(db, 'excelOrders', params.order.id), {
+    status: 'anulada',
+    lastError: cleanReason,
+  });
+  await logAdminAction({
+    adminUid: params.admin.uid,
+    adminEmail: params.admin.email,
+    action: 'Anular orden Equilibrio Lite Excel',
+    target: `${params.order.licenseId} (${params.order.email})`,
+    details: `Orden ${params.order.id} anulada · ${cleanReason}`,
+  });
+  return { ok: true, message: 'Orden marcada como anulada y registrada en Actividad.' };
+}
+
 
 

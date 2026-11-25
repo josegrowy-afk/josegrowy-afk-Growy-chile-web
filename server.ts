@@ -1,10 +1,27 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import http from 'node:http';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import dotenv from 'dotenv';
 import express from 'express';
+import { FieldValue } from 'firebase-admin/firestore';
 import type webPushType from 'web-push';
+import {
+  checkIpRateLimit,
+  fulfillExcelOrderIdempotent,
+  generatePersonalizedExcelBuffer,
+  generateUniqueLicenseId,
+  getFirebaseAdminContext,
+  getPublicAppBaseUrl,
+  isAdminCredentialError,
+  readExcelConfigFromFirestore,
+  sanitizeAndValidateBuyerInput,
+  verifyAdminRequest,
+  verifyMercadoPagoPaymentForExcelOrder,
+  verifySignedDownloadParams,
+  type ExcelOrderDoc,
+} from './server/excelDelivery';
 import {
   buildPaymentReminderNotification,
   toISODateLocal,
@@ -135,6 +152,11 @@ function sanitizeBackUrl(candidate: unknown): string {
 async function startServer() {
   const app = express();
 
+  // Nunca exponer server-assets ni plantillas internas de Excel por HTTP
+  app.use('/server-assets', (_req, res) => {
+    res.status(404).end();
+  });
+
   /**
    * Webhook de pasarela de pago mensual Mercado Pago ($5.990) u otros proveedores.
    * Acepta notificaciones IPN/Webhook de Mercado Pago (action/type payment) y webhooks genéricos HMAC.
@@ -165,24 +187,42 @@ async function startServer() {
           }
         }
 
-        const payload = JSON.parse(rawBody.toString('utf8')) as {
-          event?: string;
-          type?: string;
-          action?: string;
-          uid?: string;
-          email?: string;
-          paymentId?: string;
-          planType?: 'monthly' | 'annual';
-          status?: string;
-          data?: { id?: string | number };
-        };
+        const parsedRaw =
+          rawBody && rawBody.length > 0
+            ? (JSON.parse(rawBody.toString('utf8')) as {
+                event?: string;
+                type?: string;
+                action?: string;
+                uid?: string;
+                email?: string;
+                paymentId?: string;
+                planType?: 'monthly' | 'annual';
+                status?: string;
+                external_reference?: string;
+                data?: { id?: string | number };
+              })
+            : {};
 
-        const mpPaymentId = payload.data?.id ? String(payload.data.id) : payload.paymentId;
+        const queryType = typeof req.query.type === 'string' ? req.query.type : typeof req.query.topic === 'string' ? req.query.topic : undefined;
+        const queryDataId =
+          typeof req.query['data.id'] === 'string'
+            ? req.query['data.id']
+            : typeof req.query.id === 'string'
+              ? req.query.id
+              : undefined;
+
+        const payload = parsedRaw;
+        const eventType = payload.type || queryType;
+        const mpPaymentId = payload.data?.id
+          ? String(payload.data.id)
+          : payload.paymentId || queryDataId;
         let isPaid = payload.status === 'paid' || payload.status === 'approved' || payload.event === 'payment.succeeded';
         let detectedPlan: 'monthly' | 'annual' = payload.planType === 'annual' ? 'annual' : 'monthly';
+        let detectedExternalRef: string | undefined = payload.external_reference;
+        let mpApprovedAmount = 0;
 
         // Si viene un evento de Mercado Pago y hay MERCADOPAGO_ACCESS_TOKEN, consultar estado real en API de Mercado Pago
-        if ((payload.type === 'payment' || payload.action?.startsWith('payment.')) && mpPaymentId && process.env.MERCADOPAGO_ACCESS_TOKEN) {
+        if ((eventType === 'payment' || payload.action?.startsWith('payment.')) && mpPaymentId && process.env.MERCADOPAGO_ACCESS_TOKEN) {
           const mpRes = await fetch(`https://api.mercadopago.com/v1/payments/${encodeURIComponent(mpPaymentId)}`, {
             headers: {
               Authorization: `Bearer ${process.env.MERCADOPAGO_ACCESS_TOKEN}`,
@@ -193,7 +233,10 @@ async function startServer() {
               status?: string;
               transaction_amount?: number;
               external_reference?: string;
+              currency_id?: string;
             };
+            detectedExternalRef = mpData.external_reference || detectedExternalRef;
+            mpApprovedAmount = Number(mpData.transaction_amount ?? 0);
             if (mpData.status === 'approved') {
               isPaid = true;
             }
@@ -202,8 +245,8 @@ async function startServer() {
             }
           }
         } else if (
-          (payload.type === 'subscription_preapproval' ||
-            payload.type === 'subscription_authorized_payment' ||
+          (eventType === 'subscription_preapproval' ||
+            eventType === 'subscription_authorized_payment' ||
             payload.action?.includes('preapproval')) &&
           mpPaymentId &&
           process.env.MERCADOPAGO_ACCESS_TOKEN
@@ -224,6 +267,43 @@ async function startServer() {
             if ((preData.auto_recurring?.transaction_amount ?? 0) >= 45000) {
               detectedPlan = 'annual';
             }
+          }
+        }
+
+        // Si corresponde a una orden única de Equilibrio Lite Excel (external_reference = exl_...), procesarla de forma idempotente sin tocar Equilibrio SaaS
+        if (isPaid && detectedExternalRef && detectedExternalRef.startsWith('exl_')) {
+          try {
+            const { db } = getFirebaseAdminContext();
+            const orderSnap = await db.collection('excelOrders').doc(detectedExternalRef).get();
+            if (orderSnap.exists) {
+              const order = orderSnap.data() as ExcelOrderDoc;
+              if (mpApprovedAmount > 0 && mpApprovedAmount < order.amountCLP) {
+                res.status(200).json({
+                  received: true,
+                  excelOrder: detectedExternalRef,
+                  delivered: false,
+                  reason: 'Monto aprobado menor al esperado.',
+                });
+                return;
+              }
+              const result = await fulfillExcelOrderIdempotent({
+                orderId: detectedExternalRef,
+                paymentReference: mpPaymentId ? `MP-${mpPaymentId}` : undefined,
+                baseUrl: getPublicAppBaseUrl(req),
+              });
+              res.status(200).json({
+                received: true,
+                excelOrder: detectedExternalRef,
+                status: result.status,
+                delivered: result.ok,
+                alreadyDelivered: Boolean(result.alreadyDelivered),
+              });
+              return;
+            }
+          } catch (excelWebhookErr) {
+            console.error('[Webhook Excel] Error procesando entrega:', excelWebhookErr);
+            res.status(200).json({ received: true, excelOrder: detectedExternalRef, delivered: false });
+            return;
           }
         }
 
@@ -494,6 +574,450 @@ async function startServer() {
         status: 'pending',
         message: 'No pudimos confirmar tu suscripción automática en este momento.',
       });
+    }
+  });
+
+  /**
+   * ============================================================================
+   * EQUILIBRIO LITE EXCEL: CREACIÓN DE ORDEN, PAGO MERCADO PAGO, ENTREGA Y ADMIN
+   * ============================================================================
+   */
+  app.post('/api/excel/create-order', async (req, res) => {
+    const rate = checkIpRateLimit(req, 'create', 10, 15 * 60 * 1000);
+    if (!rate.allowed) {
+      res.status(429).json({
+        ok: false,
+        error: `Demasiados intentos desde esta conexión. Intenta nuevamente en ${rate.retryAfterSec} segundos.`,
+      });
+      return;
+    }
+
+    const validated = sanitizeAndValidateBuyerInput(req.body);
+    if (!validated.ok) {
+      res.status(400).json({ ok: false, error: validated.error });
+      return;
+    }
+
+    try {
+      const { db } = getFirebaseAdminContext();
+      const excelCfg = await readExcelConfigFromFirestore(db);
+      if (!excelCfg.active) {
+        res.status(400).json({
+          ok: false,
+          error: 'Equilibrio Lite Excel no está disponible para compra en este momento.',
+        });
+        return;
+      }
+
+      const mpToken = process.env.MERCADOPAGO_ACCESS_TOKEN?.trim();
+      const hasStaticFallback = /^https?:\/\//i.test(excelCfg.fallbackPaymentUrl);
+      if (!mpToken && !hasStaticFallback) {
+        res.status(503).json({
+          ok: false,
+          error:
+            'El cobro en línea aún se está terminando de configurar en el servidor (falta MERCADOPAGO_ACCESS_TOKEN).',
+        });
+        return;
+      }
+
+      const orderId = `exl_${Date.now().toString(36)}_${crypto.randomBytes(4).toString('hex')}`;
+      const licenseId = await generateUniqueLicenseId(db);
+      const nowISO = new Date().toISOString();
+
+      await db.collection('excelOrders').doc(orderId).set({
+        id: orderId,
+        name: validated.name,
+        email: validated.email,
+        status: 'pendiente',
+        amountCLP: excelCfg.priceAmount,
+        licenseId,
+        termsAcceptedAt: nowISO,
+        createdAt: FieldValue.serverTimestamp(),
+        deliveryAttempts: 0,
+      });
+
+      if (mpToken) {
+        const baseUrl = getPublicAppBaseUrl(req);
+        const backSuccess = `${baseUrl}/?excel_order=${encodeURIComponent(orderId)}&mp_return=success#equilibrio-lite-excel`;
+        const backPending = `${baseUrl}/?excel_order=${encodeURIComponent(orderId)}&mp_return=pending#equilibrio-lite-excel`;
+        const backFailure = `${baseUrl}/?excel_order=${encodeURIComponent(orderId)}&mp_return=failure#equilibrio-lite-excel`;
+
+        const prefRes = await fetch('https://api.mercadopago.com/checkout/preferences', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${mpToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            items: [
+              {
+                id: 'equilibrio-lite-excel',
+                title: excelCfg.productName,
+                description: `Licencia personal e intransferible (${licenseId})`,
+                quantity: 1,
+                currency_id: 'CLP',
+                unit_price: excelCfg.priceAmount,
+              },
+            ],
+            payer: {
+              name: validated.name,
+              email: validated.email,
+            },
+            external_reference: orderId,
+            back_urls: {
+              success: backSuccess,
+              pending: backPending,
+              failure: backFailure,
+            },
+            auto_return: 'approved',
+            notification_url: `${baseUrl}/api/webhooks/payment?source_news=webhooks`,
+            statement_descriptor: 'GROWY EXCEL LITE',
+          }),
+        });
+
+        if (prefRes.ok) {
+          const prefData = (await prefRes.json()) as {
+            id?: string;
+            init_point?: string;
+            sandbox_init_point?: string;
+          };
+          const checkoutUrl = prefData.init_point || prefData.sandbox_init_point;
+          if (checkoutUrl) {
+            res.status(200).json({
+              ok: true,
+              orderId,
+              checkoutUrl,
+              mode: 'preference',
+              message: 'Redirigiendo a Mercado Pago para completar tu pago único.',
+            });
+            return;
+          }
+        }
+
+        if (!hasStaticFallback) {
+          await db.collection('excelOrders').doc(orderId).update({
+            status: 'error_envio',
+            lastError: 'Mercado Pago no devolvió una preferencia de pago válida.',
+          });
+          res.status(502).json({
+            ok: false,
+            error: 'No pudimos conectar con Mercado Pago en este momento. Intenta nuevamente en unos segundos.',
+          });
+          return;
+        }
+      }
+
+      res.status(200).json({
+        ok: true,
+        orderId,
+        checkoutUrl: excelCfg.fallbackPaymentUrl,
+        mode: 'static_fallback',
+        message:
+          'Te llevamos al enlace de pago. Si usas enlace manual y no llega en minutos, escríbenos a jose.growy@gmail.com.',
+      });
+    } catch (err) {
+      console.error('[Excel CreateOrder] Error:', err);
+      if (isAdminCredentialError(err)) {
+        res.status(503).json({
+          ok: false,
+          error:
+            'Falta configurar FIREBASE_SERVICE_ACCOUNT_JSON en el servidor para registrar órdenes seguras.',
+        });
+        return;
+      }
+      res.status(500).json({
+        ok: false,
+        error: 'No pudimos iniciar tu orden en este momento. Intenta nuevamente.',
+      });
+    }
+  });
+
+  app.post('/api/excel/verify-payment', async (req, res) => {
+    const rate = checkIpRateLimit(req, 'verify', 30, 15 * 60 * 1000);
+    if (!rate.allowed) {
+      res.status(429).json({
+        ok: false,
+        message: `Demasiadas verificaciones seguidas. Intenta en ${rate.retryAfterSec} segundos.`,
+      });
+      return;
+    }
+
+    try {
+      const { orderId, paymentId } = req.body as {
+        orderId?: string;
+        paymentId?: string;
+      };
+      const cleanOrderId = typeof orderId === 'string' ? orderId.trim() : '';
+      if (!/^[a-zA-Z0-9_-]{6,128}$/.test(cleanOrderId)) {
+        res.status(400).json({ ok: false, message: 'Identificador de orden inválido.' });
+        return;
+      }
+
+      const { db } = getFirebaseAdminContext();
+      const orderSnap = await db.collection('excelOrders').doc(cleanOrderId).get();
+      if (!orderSnap.exists) {
+        res.status(404).json({ ok: false, message: 'No encontramos esa orden.' });
+        return;
+      }
+      const order = { ...(orderSnap.data() as Omit<ExcelOrderDoc, 'id'>), id: orderSnap.id };
+
+      if (order.status === 'entregada') {
+        res.status(200).json({
+          ok: true,
+          status: 'entregada',
+          delivered: true,
+          licenseId: order.licenseId,
+          message: `Tu Equilibrio Lite Excel ya fue enviado al correo ${order.email} (Licencia ${order.licenseId}).`,
+        });
+        return;
+      }
+
+      if (order.status === 'anulada') {
+        res.status(200).json({
+          ok: false,
+          status: 'anulada',
+          delivered: false,
+          message: 'Esta orden fue anulada. Si crees que es un error, escribe a jose.growy@gmail.com.',
+        });
+        return;
+      }
+
+      const cleanPaymentId =
+        typeof paymentId === 'string' && /^[0-9a-zA-Z_-]{3,80}$/.test(paymentId.trim())
+          ? paymentId.trim()
+          : undefined;
+
+      const mpCheck = await verifyMercadoPagoPaymentForExcelOrder({
+        orderId: cleanOrderId,
+        paymentId: cleanPaymentId,
+        expectedAmountCLP: order.amountCLP,
+      });
+
+      if (!mpCheck.approved) {
+        res.status(200).json({
+          ok: false,
+          status: order.status,
+          delivered: false,
+          message:
+            order.status === 'error_envio'
+              ? 'Tu pago fue registrado, pero hubo un problema enviando el correo. Escríbenos a jose.growy@gmail.com para reenviar tu planilla.'
+              : 'Mercado Pago aún no confirma este pago como aprobado. Si ya pagaste, espera unos segundos o escríbenos a jose.growy@gmail.com.',
+        });
+        return;
+      }
+
+      const result = await fulfillExcelOrderIdempotent({
+        orderId: cleanOrderId,
+        paymentReference: mpCheck.mpPaymentId ? `MP-${mpCheck.mpPaymentId}` : undefined,
+        baseUrl: getPublicAppBaseUrl(req),
+      });
+
+      res.status(200).json({
+        ok: result.ok,
+        status: result.status,
+        delivered: result.ok,
+        licenseId: result.licenseId,
+        message: result.message,
+      });
+    } catch (err) {
+      console.error('[Excel Verify] Error:', err);
+      res.status(500).json({
+        ok: false,
+        delivered: false,
+        message: 'No pudimos verificar el pago en línea en este momento.',
+      });
+    }
+  });
+
+  app.get('/api/excel/download', async (req, res) => {
+    const rate = checkIpRateLimit(req, 'download', 20, 15 * 60 * 1000);
+    if (!rate.allowed) {
+      res.status(429).send('Demasiadas solicitudes. Intenta en unos segundos.');
+      return;
+    }
+
+    try {
+      const orderId = typeof req.query.orderId === 'string' ? req.query.orderId.trim() : '';
+      const expRaw = typeof req.query.exp === 'string' ? req.query.exp.trim() : '';
+      const sigRaw = typeof req.query.sig === 'string' ? req.query.sig.trim() : '';
+      if (!/^[a-zA-Z0-9_-]{6,128}$/.test(orderId) || !expRaw || !sigRaw) {
+        res.status(400).send('Enlace de descarga inválido.');
+        return;
+      }
+
+      const { db } = getFirebaseAdminContext();
+      const orderSnap = await db.collection('excelOrders').doc(orderId).get();
+      if (!orderSnap.exists) {
+        res.status(404).send('Orden no encontrada.');
+        return;
+      }
+      const order = { ...(orderSnap.data() as Omit<ExcelOrderDoc, 'id'>), id: orderSnap.id };
+      if (order.status !== 'pagada' && order.status !== 'entregada') {
+        res.status(403).send('Esta descarga no está habilitada.');
+        return;
+      }
+
+      const validSig = verifySignedDownloadParams({
+        orderId: order.id,
+        licenseId: order.licenseId,
+        expRaw,
+        sigRaw,
+      });
+      if (!validSig) {
+        res.status(403).send('El enlace de descarga expiró o no es válido.');
+        return;
+      }
+
+      const xlsxBuffer = await generatePersonalizedExcelBuffer({
+        licenseeName: order.name,
+        licenseId: order.licenseId,
+      });
+      const filename = `Equilibrio-Lite-${order.licenseId}.xlsx`;
+      res.setHeader(
+        'Content-Type',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      );
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      res.setHeader('Cache-Control', 'no-store');
+      res.status(200).send(xlsxBuffer);
+    } catch (err) {
+      console.error('[Excel Download] Error:', err);
+      res.status(500).send('No pudimos preparar tu archivo en este momento.');
+    }
+  });
+
+  app.get('/api/admin/excel-orders', async (req, res) => {
+    const authResult = await verifyAdminRequest(req);
+    if (!authResult.ok) {
+      res.status(authResult.status).json({ ok: false, error: authResult.error });
+      return;
+    }
+
+    try {
+      const { db } = getFirebaseAdminContext();
+      const snap = await db
+        .collection('excelOrders')
+        .orderBy('createdAt', 'desc')
+        .limit(500)
+        .get();
+      const orders = snap.docs.map((d) => ({
+        ...(d.data() as Omit<ExcelOrderDoc, 'id'>),
+        id: d.id,
+      }));
+      res.status(200).json({ ok: true, orders });
+    } catch (err) {
+      if (isAdminCredentialError(err)) {
+        res.status(503).json({
+          ok: false,
+          useClientFallback: true,
+          error: 'Admin SDK sin credenciales locales.',
+        });
+        return;
+      }
+      res.status(500).json({ ok: false, error: 'Error consultando órdenes Excel.' });
+    }
+  });
+
+  app.post('/api/admin/excel-orders/:orderId/resend', async (req, res) => {
+    const authResult = await verifyAdminRequest(req);
+    if (!authResult.ok) {
+      res.status(authResult.status).json({ ok: false, error: authResult.error });
+      return;
+    }
+
+    const orderId = String(req.params.orderId || '').trim();
+    if (!/^[a-zA-Z0-9_-]{6,128}$/.test(orderId)) {
+      res.status(400).json({ ok: false, error: 'ID de orden inválido.' });
+      return;
+    }
+
+    try {
+      const { db } = getFirebaseAdminContext();
+      const orderSnap = await db.collection('excelOrders').doc(orderId).get();
+      if (!orderSnap.exists) {
+        res.status(404).json({ ok: false, error: 'Orden no encontrada.' });
+        return;
+      }
+      const order = { ...(orderSnap.data() as Omit<ExcelOrderDoc, 'id'>), id: orderSnap.id };
+      if (order.status === 'anulada') {
+        res.status(400).json({ ok: false, error: 'No se puede reenviar una orden anulada.' });
+        return;
+      }
+      if (order.status === 'pendiente') {
+        res.status(400).json({
+          ok: false,
+          error:
+            'La orden aún está pendiente de pago confirmado en Mercado Pago. Verifica el pago antes de reenviar.',
+        });
+        return;
+      }
+
+      const result = await fulfillExcelOrderIdempotent({
+        orderId,
+        baseUrl: getPublicAppBaseUrl(req),
+        forceResend: true,
+      });
+
+      res.status(result.ok ? 200 : 500).json({
+        ok: result.ok,
+        status: result.status,
+        message: result.ok
+          ? `Archivo reenviado a ${order.email} (${order.licenseId}).`
+          : result.message,
+      });
+    } catch (err) {
+      console.error('[Admin Resend Excel] Error:', err);
+      res.status(500).json({ ok: false, error: 'No se pudo reenviar la planilla.' });
+    }
+  });
+
+  app.post('/api/admin/excel-orders/:orderId/cancel', async (req, res) => {
+    const authResult = await verifyAdminRequest(req);
+    if (!authResult.ok) {
+      res.status(authResult.status).json({
+        ok: false,
+        useClientFallback: authResult.status === 503,
+        error: authResult.error,
+      });
+      return;
+    }
+
+    const orderId = String(req.params.orderId || '').trim();
+    if (!/^[a-zA-Z0-9_-]{6,128}$/.test(orderId)) {
+      res.status(400).json({ ok: false, error: 'ID de orden inválido.' });
+      return;
+    }
+
+    try {
+      const { db } = getFirebaseAdminContext();
+      const orderRef = db.collection('excelOrders').doc(orderId);
+      const snap = await orderRef.get();
+      if (!snap.exists) {
+        res.status(404).json({ ok: false, error: 'Orden no encontrada.' });
+        return;
+      }
+      const rawReason =
+        typeof (req.body as { reason?: unknown })?.reason === 'string'
+          ? String((req.body as { reason?: string }).reason)
+          : 'Anulada por administrador';
+      const cleanReason = rawReason.replace(/[\u0000-\u001F\u007F]/g, ' ').trim().slice(0, 240);
+
+      await orderRef.update({
+        status: 'anulada',
+        lastError: cleanReason || 'Anulada por administrador',
+      });
+
+      res.status(200).json({ ok: true, message: 'Orden anulada correctamente.' });
+    } catch (err) {
+      if (isAdminCredentialError(err)) {
+        res.status(503).json({
+          ok: false,
+          useClientFallback: true,
+          error: 'Admin SDK sin credenciales locales.',
+        });
+        return;
+      }
+      res.status(500).json({ ok: false, error: 'No se pudo anular la orden.' });
     }
   });
 
@@ -1253,10 +1777,15 @@ async function startServer() {
     void dispatchDueReminders();
   }, 6 * 60 * 60 * 1000);
 
+  const httpServer = http.createServer(app);
+
   if (!isProduction) {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        hmr: process.env.DISABLE_HMR === 'true' ? false : { server: httpServer },
+      },
       appType: 'spa',
     });
     app.use(vite.middlewares);
@@ -1286,7 +1815,7 @@ async function startServer() {
     });
   }
 
-  const server = app.listen(PORT, () => {
+  const server = httpServer.listen(PORT, () => {
     const addr = server.address();
     const hostLabel = typeof addr === 'object' && addr ? addr.address : '::';
     console.log(

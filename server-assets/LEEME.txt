@@ -1,0 +1,24 @@
+EQUILIBRIO LITE EXCEL — PLANTILLA DEL SERVIDOR
+=================================================
+
+1. Qué archivo va aquí:
+   Sube a esta carpeta tu archivo Excel maestro con el nombre exacto:
+   EquilibrioLite_plantilla.xlsx
+
+   Ruta por defecto usada por el servidor:
+   server-assets/EquilibrioLite_plantilla.xlsx
+
+   (También puedes definir una ruta distinta mediante la variable de entorno
+   EXCEL_TEMPLATE_PATH en Railway.)
+
+2. Marcadores dentro de la plantilla:
+   Al confirmar un pago aprobado en Mercado Pago, el servidor abrirá el .xlsx
+   como paquete ZIP, buscará los marcadores dentro de los archivos .xml y los
+   reemplazará automáticamente sin modificar gráficos, formatos ni protecciones:
+   - {{LICENSEE}}   -> Nombre completo del comprador (escapado en XML)
+   - {{LICENSE_ID}} -> Código único de licencia (ej. GROWY-A7K9M2P4)
+
+3. Seguridad:
+   - Esta carpeta NO debe moverse a /public ni servirse como archivo estático.
+   - El proceso `npm run build` solo compila hacia /dist y nunca incluye /server-assets.
+   - No guardes contraseñas ni secretos de Excel en el repositorio, Firestore o correos.
