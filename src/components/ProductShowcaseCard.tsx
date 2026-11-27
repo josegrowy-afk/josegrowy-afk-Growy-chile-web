@@ -22,6 +22,8 @@ export interface ProductShowcaseCardProps {
   refundGuaranteeText?: string;
   trustNote: string;
   onPaymentCtaClick?: (planType: 'monthly' | 'annual') => void;
+  onCheckoutPlan?: (planType: 'monthly' | 'annual') => void;
+  checkoutLoadingPlan?: 'monthly' | 'annual' | null;
   secondaryAction?: {
     label: string;
     onClick: () => void;
@@ -50,6 +52,8 @@ export const ProductShowcaseCard: React.FC<ProductShowcaseCardProps> = ({
   refundGuaranteeText,
   trustNote,
   onPaymentCtaClick,
+  onCheckoutPlan,
+  checkoutLoadingPlan = null,
   secondaryAction,
   iconSrc,
   icon,
@@ -133,16 +137,33 @@ export const ProductShowcaseCard: React.FC<ProductShowcaseCardProps> = ({
                     Eliges fecha de pago: día 5, 15 o 30 de cada mes.
                   </p>
                 </div>
-                <a
-                  href={hasExternalUrl ? paymentUrl : '#contacto'}
-                  target={hasExternalUrl ? '_blank' : undefined}
-                  rel={hasExternalUrl ? 'noopener noreferrer' : undefined}
-                  onClick={() => onPaymentCtaClick?.('monthly')}
-                  className="inline-flex items-center justify-center gap-1.5 min-h-[44px] px-4 py-2.5 rounded-full border border-[var(--border-hairline)] bg-[var(--bg-surface)] hover:bg-[var(--sec-soft)] text-[var(--text-primary)] text-xs font-bold transition-colors whitespace-nowrap"
-                >
-                  <span>{ctaLabel}</span>
-                  <ArrowRight className="w-3.5 h-3.5" />
-                </a>
+                {onCheckoutPlan ? (
+                  <button
+                    type="button"
+                    disabled={checkoutLoadingPlan !== null}
+                    onClick={() => {
+                      onPaymentCtaClick?.('monthly');
+                      onCheckoutPlan('monthly');
+                    }}
+                    className="inline-flex items-center justify-center gap-1.5 min-h-[44px] px-4 py-2.5 rounded-full border border-[var(--border-hairline)] bg-[var(--bg-surface)] hover:bg-[var(--sec-soft)] text-[var(--text-primary)] text-xs font-bold transition-colors whitespace-nowrap cursor-pointer disabled:opacity-60"
+                  >
+                    <span>
+                      {checkoutLoadingPlan === 'monthly' ? 'Abriendo pago...' : ctaLabel}
+                    </span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </button>
+                ) : (
+                  <a
+                    href={hasExternalUrl ? paymentUrl : '#contacto'}
+                    target={hasExternalUrl ? '_blank' : undefined}
+                    rel={hasExternalUrl ? 'noopener noreferrer' : undefined}
+                    onClick={() => onPaymentCtaClick?.('monthly')}
+                    className="inline-flex items-center justify-center gap-1.5 min-h-[44px] px-4 py-2.5 rounded-full border border-[var(--border-hairline)] bg-[var(--bg-surface)] hover:bg-[var(--sec-soft)] text-[var(--text-primary)] text-xs font-bold transition-colors whitespace-nowrap"
+                  >
+                    <span>{ctaLabel}</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </a>
+                )}
               </div>
 
               {/* Plan Anual (destacado con etiqueta coral) */}
@@ -171,20 +192,43 @@ export const ProductShowcaseCard: React.FC<ProductShowcaseCardProps> = ({
                     {annualPriceNote || '12 meses completos · al vencer renuevas mensual o anual.'}
                   </p>
                 </div>
-                <a
-                  href={hasAnnualExternalUrl ? resolvedAnnualUrl : '#contacto'}
-                  target={hasAnnualExternalUrl ? '_blank' : undefined}
-                  rel={hasAnnualExternalUrl ? 'noopener noreferrer' : undefined}
-                  onClick={() => onPaymentCtaClick?.('annual')}
-                  style={{
-                    backgroundColor: 'var(--btn-navy-bg)',
-                    color: 'var(--btn-navy-text)',
-                  }}
-                  className="inline-flex items-center justify-center gap-1.5 min-h-[44px] px-4 py-2.5 rounded-full hover:opacity-92 text-xs font-bold transition-opacity whitespace-nowrap shadow-xs"
-                >
-                  <span>{annualCtaLabel || `Elegir ${annualPriceLabel}`}</span>
-                  <ArrowRight className="w-3.5 h-3.5" />
-                </a>
+                {onCheckoutPlan ? (
+                  <button
+                    type="button"
+                    disabled={checkoutLoadingPlan !== null}
+                    onClick={() => {
+                      onPaymentCtaClick?.('annual');
+                      onCheckoutPlan('annual');
+                    }}
+                    style={{
+                      backgroundColor: 'var(--btn-navy-bg)',
+                      color: 'var(--btn-navy-text)',
+                    }}
+                    className="inline-flex items-center justify-center gap-1.5 min-h-[44px] px-4 py-2.5 rounded-full hover:opacity-92 text-xs font-bold transition-opacity whitespace-nowrap shadow-xs cursor-pointer disabled:opacity-60"
+                  >
+                    <span>
+                      {checkoutLoadingPlan === 'annual'
+                        ? 'Abriendo pago...'
+                        : annualCtaLabel || `Elegir ${annualPriceLabel}`}
+                    </span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </button>
+                ) : (
+                  <a
+                    href={hasAnnualExternalUrl ? resolvedAnnualUrl : '#contacto'}
+                    target={hasAnnualExternalUrl ? '_blank' : undefined}
+                    rel={hasAnnualExternalUrl ? 'noopener noreferrer' : undefined}
+                    onClick={() => onPaymentCtaClick?.('annual')}
+                    style={{
+                      backgroundColor: 'var(--btn-navy-bg)',
+                      color: 'var(--btn-navy-text)',
+                    }}
+                    className="inline-flex items-center justify-center gap-1.5 min-h-[44px] px-4 py-2.5 rounded-full hover:opacity-92 text-xs font-bold transition-opacity whitespace-nowrap shadow-xs"
+                  >
+                    <span>{annualCtaLabel || `Elegir ${annualPriceLabel}`}</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </a>
+                )}
               </div>
             </div>
           ) : (
@@ -205,20 +249,41 @@ export const ProductShowcaseCard: React.FC<ProductShowcaseCardProps> = ({
 
           {!annualPriceLabel && (
             <div className="flex flex-wrap items-center gap-3">
-              <a
-                href={hasExternalUrl ? paymentUrl : '#contacto'}
-                target={hasExternalUrl ? '_blank' : undefined}
-                rel={hasExternalUrl ? 'noopener noreferrer' : undefined}
-                onClick={() => onPaymentCtaClick?.('monthly')}
-                style={{
-                  backgroundColor: 'var(--btn-navy-bg)',
-                  color: 'var(--btn-navy-text)',
-                }}
-                className="inline-flex items-center justify-center gap-2 min-h-[48px] px-7 py-3 rounded-full hover:opacity-92 text-sm font-bold transition-opacity whitespace-nowrap shadow-xs"
-              >
-                <span>{ctaLabel}</span>
-                <ArrowRight className="w-4 h-4" />
-              </a>
+              {onCheckoutPlan ? (
+                <button
+                  type="button"
+                  disabled={checkoutLoadingPlan !== null}
+                  onClick={() => {
+                    onPaymentCtaClick?.('monthly');
+                    onCheckoutPlan('monthly');
+                  }}
+                  style={{
+                    backgroundColor: 'var(--btn-navy-bg)',
+                    color: 'var(--btn-navy-text)',
+                  }}
+                  className="inline-flex items-center justify-center gap-2 min-h-[48px] px-7 py-3 rounded-full hover:opacity-92 text-sm font-bold transition-opacity whitespace-nowrap shadow-xs cursor-pointer disabled:opacity-60"
+                >
+                  <span>
+                    {checkoutLoadingPlan === 'monthly' ? 'Abriendo pago...' : ctaLabel}
+                  </span>
+                  <ArrowRight className="w-4 h-4" />
+                </button>
+              ) : (
+                <a
+                  href={hasExternalUrl ? paymentUrl : '#contacto'}
+                  target={hasExternalUrl ? '_blank' : undefined}
+                  rel={hasExternalUrl ? 'noopener noreferrer' : undefined}
+                  onClick={() => onPaymentCtaClick?.('monthly')}
+                  style={{
+                    backgroundColor: 'var(--btn-navy-bg)',
+                    color: 'var(--btn-navy-text)',
+                  }}
+                  className="inline-flex items-center justify-center gap-2 min-h-[48px] px-7 py-3 rounded-full hover:opacity-92 text-sm font-bold transition-opacity whitespace-nowrap shadow-xs"
+                >
+                  <span>{ctaLabel}</span>
+                  <ArrowRight className="w-4 h-4" />
+                </a>
+              )}
             </div>
           )}
 

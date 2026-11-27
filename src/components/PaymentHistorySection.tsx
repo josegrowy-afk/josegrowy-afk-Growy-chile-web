@@ -277,7 +277,7 @@ export const PaymentHistorySection: React.FC<PaymentHistorySectionProps> = ({
             <p className="text-[11px] text-[var(--text-secondary)] leading-relaxed">
               {canSyncLegacyPayment
                 ? `Último pago registrado el ${formatPaidDateTime(profile.lastPaymentAt!)} (vigencia hasta ${formatISODateSpanish(profile.nextPaymentDueAt)}). Sincronízalo para obtener tu folio y enviar el comprobante a tu correo.`
-                : 'Cada vez que se confirme un pago mensual ($5.990) o anual ($50.000), verás aquí la fecha, ID de transacción, monto y estado del comprobante enviado a tu correo.'}
+                : 'Cada vez que se confirme un pago mensual ($5.990) o anual ($49.990), verás aquí la fecha, ID de transacción, monto y estado del comprobante enviado a tu correo.'}
             </p>
           </div>
           {canSyncLegacyPayment && (

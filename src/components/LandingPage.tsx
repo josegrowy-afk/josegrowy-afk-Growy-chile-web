@@ -97,6 +97,8 @@ interface LandingPageProps {
   onLoginClick: () => void;
   authLoading: boolean;
   authError: string | null;
+  onCheckoutPlan?: (planType: 'monthly' | 'annual') => Promise<void> | void;
+  checkoutLoadingPlan?: 'monthly' | 'annual' | null;
 }
 
 const FAQ_CAT_LABELS: Record<FaqCategory | 'all', string> = {
@@ -149,6 +151,8 @@ export const LandingPage: React.FC<LandingPageProps> = ({
   onLoginClick,
   authLoading,
   authError,
+  onCheckoutPlan,
+  checkoutLoadingPlan = null,
 }) => {
   const lc = useMemo(
     () => ({
@@ -972,6 +976,19 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               onPaymentCtaClick={(planType) =>
                 trackFunnelStepOncePerSession('payment', { source: 'landing', planType })
               }
+              onCheckoutPlan={(planType) => {
+                if (isSignedIn && onCheckoutPlan) {
+                  void onCheckoutPlan(planType);
+                  return;
+                }
+                try {
+                  sessionStorage.setItem('growy_pending_checkout_plan', planType);
+                } catch {
+                  // Ignorar si sessionStorage no está disponible
+                }
+                onLoginClick();
+              }}
+              checkoutLoadingPlan={checkoutLoadingPlan}
               icon={<EquilibrioProductIcon size="lg" />}
               secondaryAction={{
                 label: isSignedIn

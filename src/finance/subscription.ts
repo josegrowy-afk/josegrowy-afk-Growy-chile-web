@@ -7,12 +7,12 @@ import type {
 
 export const MONTHLY_PRICE_CLP = 5990;
 export const MONTHLY_PRICE_LABEL = '$5.990 / mes';
-export const ANNUAL_PRICE_CLP = 50000;
+export const ANNUAL_PRICE_CLP = 49990;
 export const ANNUAL_NORMAL_PRICE_CLP = 71880;
-export const ANNUAL_EQUIV_MONTHLY_CLP = 4167;
-export const ANNUAL_SAVINGS_CLP = 21880;
-export const ANNUAL_DISCOUNT_LABEL = '30,44%';
-export const ANNUAL_PRICE_LABEL = '$50.000 / año';
+export const ANNUAL_EQUIV_MONTHLY_CLP = 4166;
+export const ANNUAL_SAVINGS_CLP = 21890;
+export const ANNUAL_DISCOUNT_LABEL = '30,45%';
+export const ANNUAL_PRICE_LABEL = '$49.990 / año';
 export const LAUNCH_PRICING_BADGE = 'Precio por lanzamiento';
 export const LAUNCH_PRICING_NOTE =
   'Valores por lanzamiento por tiempo limitado: aprovecha hoy antes de que pasen a su valor regular.';
@@ -120,7 +120,7 @@ export function computeNextCycleDueDate(
 }
 
 /**
- * Calcula la fecha de vencimiento anual (exactamente 12 meses después del pago único de $50.000).
+ * Calcula la fecha de vencimiento anual (exactamente 12 meses después del pago único de $49.990).
  * Si renueva antes de vencer, suma 12 meses a su vencimiento vigente.
  */
 export function computeAnnualDueDate(
@@ -224,7 +224,7 @@ export function getSubscriptionStatus(
     };
   }
 
-  // En plan anual ($50.000 pago único 12 meses), NO se pide ni cobra fecha mensual (5/15/30).
+  // En plan anual ($49.990 pago único 12 meses), NO se pide ni cobra fecha mensual (5/15/30).
   const hasBillingDay = isAnnual ? true : billingDay !== null;
 
   if (!nextDueISO) {
@@ -298,7 +298,7 @@ export function buildPaymentReminderNotification(
           status.daysUntilDue === 1
             ? 'GROWy: ¡Tu Plan Anual vence mañana!'
             : 'GROWy: Tu Plan Anual vence pronto',
-        body: `Tus 12 meses ($50.000) finalizan ${daysText} (${formattedDate}). Renueva antes para evitar que tu cuenta quede bloqueada.`,
+        body: `Tus 12 meses ($49.990) finalizan ${daysText} (${formattedDate}). Renueva antes para evitar que tu cuenta quede bloqueada.`,
         tag: `growy-payment-reminder-${status.nextDueISO}`,
         url: '/?reminder=payment',
         requireInteraction: status.daysUntilDue <= 2,

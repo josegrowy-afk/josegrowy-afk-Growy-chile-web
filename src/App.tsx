@@ -81,12 +81,15 @@ import { auth, googleProvider } from './firebase/client';
 import {
   DEFAULT_APP_CONFIG,
   DEFAULT_FAQS,
+  createEquilibrioCheckoutSession,
   deleteUserBusiness,
   ensureUserProfile,
+  getSiteAnalyticsSessionId,
   markUserOnboardingCompleted,
   recordPaymentAndSendReceipt,
   saveUserBusiness,
   seedDemoBusinessesForUser,
+  sendSiteAnalyticsPing,
   setUserBillingDay,
   setUserPlanPreference,
   subscribeAllTicketsAdmin,
@@ -107,6 +110,7 @@ import type {
   ColorTone,
   FaqItem,
   PaymentHistoryEntry,
+  PlanType,
   UserProfile,
   ViewTab,
 } from './types/finance';
@@ -169,6 +173,7 @@ export default function App() {
   const [mpVerificationNotice, setMpVerificationNotice] = useState<string | null>(null);
   const [checkedMpPaymentId, setCheckedMpPaymentId] = useState<string | null>(null);
   const [checkedMpPreapprovalId, setCheckedMpPreapprovalId] = useState<string | null>(null);
+  const [checkoutLoadingPlan, setCheckoutLoadingPlan] = useState<PlanType | null>(null);
   const [showProblemModal, setShowProblemModal] = useState(false);
   const [showOnboardingTour, setShowOnboardingTour] = useState(false);
   const [billingDayPick, setBillingDayPick] = useState<BillingDay | null>(null);
@@ -250,6 +255,45 @@ export default function App() {
     };
   }, []);
 
+  // Analítica de visitas en tiempo real e historial diario (solo visible para el administrador)
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const sessionId = getSiteAnalyticsSessionId();
+    const currentPath = () => `${window.location.pathname || '/'}${window.location.hash || ''}`;
+
+    void sendSiteAnalyticsPing({
+      sessionId,
+      path: currentPath(),
+      isPageView: true,
+    });
+
+    const intervalId = window.setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        void sendSiteAnalyticsPing({
+          sessionId,
+          path: currentPath(),
+          isPageView: false,
+        });
+      }
+    }, 30_000);
+
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        void sendSiteAnalyticsPing({
+          sessionId,
+          path: currentPath(),
+          isPageView: false,
+        });
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    return () => {
+      window.clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, []);
+
   // Listener de Firebase Auth (soporta Google Sign-In y Correo/Contraseña con verificación)
   useEffect(() => {
     const unsubAuth = onAuthStateChanged(auth, async (fbUser) => {
@@ -310,19 +354,29 @@ export default function App() {
     };
   }, [authUid]);
 
-  // Verificación automática al volver de Mercado Pago con payment_id / collection_id
+  // Verificación automática al volver de Mercado Pago (Checkout Pro o link directo)
   useEffect(() => {
     if (!authUid || !profile) return;
     const params = new URLSearchParams(window.location.search);
     if (params.has('excel_order')) return;
-    const mpId = params.get('payment_id') || params.get('collection_id');
-    const mpStatus = params.get('status') || params.get('collection_status');
-    if (!mpId || checkedMpPaymentId === mpId) return;
+    const mpId = params.get('payment_id') || params.get('collection_id') || undefined;
+    const equilibrioOrder = params.get('equilibrio_order') || undefined;
+    const mpReturn = params.get('mp_return') || undefined;
+    const mpStatus = params.get('status') || params.get('collection_status') || undefined;
+    const verificationKey = mpId || equilibrioOrder;
+    if (!verificationKey || checkedMpPaymentId === verificationKey) return;
 
-    setCheckedMpPaymentId(mpId);
-    if (mpStatus && mpStatus !== 'approved' && mpStatus !== 'accredited') {
+    setCheckedMpPaymentId(verificationKey);
+    if (
+      mpReturn === 'failure' ||
+      (mpStatus &&
+        mpStatus !== 'approved' &&
+        mpStatus !== 'accredited' &&
+        mpStatus !== 'pending' &&
+        mpStatus !== 'in_process')
+    ) {
       setMpVerificationNotice(
-        `Mercado Pago informó estado "${mpStatus}". Si completaste el pago ($5.990 mensual o $50.000 anual) y no se habilita, adjunta tu comprobante abajo.`
+        `Mercado Pago informó estado "${mpStatus || mpReturn}". Puedes reintentar tu pago cuando quieras o adjuntar tu comprobante si ya realizaste el cargo.`
       );
       window.history.replaceState({}, document.title, window.location.pathname + window.location.hash);
       return;
@@ -330,38 +384,41 @@ export default function App() {
 
     verifyMercadoPagoPayment({
       paymentId: mpId,
+      orderId: equilibrioOrder,
       uid: profile.uid,
       email: profile.email,
       planType: profile.planType,
       billingDay: profile.billingDay,
     }).then(async (res) => {
-      if (res.verified) {
+      if (res.verified && !res.activated && profile.accessStatus === 'active') {
         const resolvedPlan = res.planType === 'annual' || profile.planType === 'annual' ? 'annual' : 'monthly';
         const periodEnd =
-          resolvedPlan === 'annual'
+          res.nextPaymentDueAt ||
+          (resolvedPlan === 'annual'
             ? computeAnnualDueDate(profile.nextPaymentDueAt)
-            : computeInitialNextDueDate(profile.billingDay ?? 5);
+            : computeInitialNextDueDate(profile.billingDay ?? 5));
+        const txRef = mpId || equilibrioOrder || `mp_${Date.now()}`;
         try {
           await recordPaymentAndSendReceipt({
-            id: `mp_${mpId.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 80)}`,
+            id: `mp_${txRef.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 80)}`,
             uid: profile.uid,
             email: profile.email,
             displayName: profile.displayName,
             planType: resolvedPlan,
             amountClp: resolvedPlan === 'annual' ? ANNUAL_PRICE_CLP : MONTHLY_PRICE_CLP,
-            transactionId: mpId,
+            transactionId: txRef,
             paymentMethod: 'mercadopago',
             periodCoveredEnd: periodEnd,
             notes: 'Pago verificado desde retorno de Mercado Pago (tarifa por lanzamiento)',
           });
         } catch {
-          // Silencioso si el usuario aún está pendiente o sin conexión
+          // Silencioso si el servidor ya registró el comprobante o falta conexión
         }
       }
       setMpVerificationNotice(res.message);
       window.history.replaceState({}, document.title, window.location.pathname + window.location.hash);
     });
-  }, [authUid, profile?.uid, profile?.email, profile?.displayName, profile?.planType, profile?.billingDay, profile?.nextPaymentDueAt, checkedMpPaymentId]);
+  }, [authUid, profile?.uid, profile?.email, profile?.displayName, profile?.planType, profile?.billingDay, profile?.nextPaymentDueAt, profile?.accessStatus, checkedMpPaymentId]);
 
   // 3.7 Verificación al volver de Mercado Pago Suscripción Automática (?preapproval_id=...)
   useEffect(() => {
@@ -723,6 +780,35 @@ export default function App() {
     setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
   };
 
+  const handleCheckoutEquilibrioPlan = async (planType: PlanType) => {
+    if (!authUid || !profile) {
+      try {
+        sessionStorage.setItem('growy_pending_checkout_plan', planType);
+      } catch {
+        // Ignorar si sessionStorage no está disponible
+      }
+      handleOpenAuthModal();
+      return;
+    }
+    void trackFunnelStepOncePerSession('payment', {
+      source: 'landing',
+      planType,
+    });
+    setCheckoutLoadingPlan(planType);
+    try {
+      const res = await createEquilibrioCheckoutSession({
+        profile,
+        planType,
+        appConfig,
+      });
+      if (res.checkoutUrl && typeof window !== 'undefined') {
+        window.location.assign(res.checkoutUrl);
+      }
+    } finally {
+      setCheckoutLoadingPlan(null);
+    }
+  };
+
   // Vista de prueba interna (solo en entorno DEV con ?design-system=1)
   if (import.meta.env.DEV && designSystemMode && LazyDesignSystemShowcase) {
     return (
@@ -786,6 +872,8 @@ export default function App() {
           onLoginClick={handleOpenAuthModal}
           authLoading={authLoading}
           authError={authError}
+          onCheckoutPlan={handleCheckoutEquilibrioPlan}
+          checkoutLoadingPlan={checkoutLoadingPlan}
         />
         <AuthModal
           open={authModalOpen}
@@ -1274,25 +1362,40 @@ export default function App() {
                             : 'Plan $5.990/mes'}
                       </span>
                       {!subStatus.isComplimentary && (
-                        <a
-                          href={
-                            subStatus.isAnnual
-                              ? appConfig.annualPaymentUrl || appConfig.paymentUrl
-                              : appConfig.paymentUrl
-                          }
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          onClick={() =>
+                        <button
+                          type="button"
+                          disabled={checkoutLoadingPlan !== null}
+                          onClick={async () => {
+                            const targetPlan: PlanType = subStatus.isAnnual ? 'annual' : 'monthly';
                             void trackFunnelStepOncePerSession('payment', {
                               source: 'app',
-                              planType: subStatus.isAnnual ? 'annual' : 'monthly',
-                            })
-                          }
-                          className="font-bold text-[var(--accent-strong)] hover:underline inline-flex items-center gap-0.5"
+                              planType: targetPlan,
+                            });
+                            setCheckoutLoadingPlan(targetPlan);
+                            try {
+                              const res = await createEquilibrioCheckoutSession({
+                                profile,
+                                planType: targetPlan,
+                                appConfig,
+                              });
+                              if (res.checkoutUrl) {
+                                window.location.assign(res.checkoutUrl);
+                              }
+                            } finally {
+                              setCheckoutLoadingPlan(null);
+                            }
+                          }}
+                          className="font-bold text-[var(--accent-strong)] hover:underline inline-flex items-center gap-0.5 cursor-pointer disabled:opacity-60"
                         >
-                          <span>{subStatus.isAnnual ? 'Renovar' : 'Pagar'}</span>
+                          <span>
+                            {checkoutLoadingPlan
+                              ? 'Abriendo...'
+                              : subStatus.isAnnual
+                                ? 'Renovar'
+                                : 'Pagar'}
+                          </span>
                           <ArrowRight className="w-3 h-3" />
-                        </a>
+                        </button>
                       )}
                     </div>
                   )}
@@ -1414,7 +1517,7 @@ export default function App() {
               </SolidCard>
             )}
 
-            {/* Recordatorio de vencimiento mensual ($5.990) o fin de 12 meses anual ($50.000) */}
+            {/* Recordatorio de vencimiento mensual ($5.990) o fin de 12 meses anual ($49.990) */}
             {subStatus.shouldShowReminder && subStatus.nextDueISO && (
               <SolidCard
                 className="mb-5 p-4 !bg-[var(--warn-soft)] !border-[var(--warn-border)] flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3.5 text-xs text-[var(--warn-text)]"
@@ -1459,36 +1562,68 @@ export default function App() {
                         <span>{pushNotifications.busy ? 'Activando...' : 'Activar aviso push'}</span>
                       </button>
                     )}
-                  <a
-                    href={appConfig.paymentUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    onClick={() =>
+                  <button
+                    type="button"
+                    disabled={checkoutLoadingPlan !== null}
+                    onClick={async () => {
                       void trackFunnelStepOncePerSession('payment', {
                         source: 'app',
                         planType: 'monthly',
-                      })
-                    }
-                    className="min-h-[42px] px-5 rounded-full border border-[var(--border-hairline)] bg-[var(--bg-surface)] text-[var(--text-primary)] font-bold inline-flex items-center justify-center gap-1.5 whitespace-nowrap"
+                      });
+                      setCheckoutLoadingPlan('monthly');
+                      try {
+                        const res = await createEquilibrioCheckoutSession({
+                          profile,
+                          planType: 'monthly',
+                          appConfig,
+                        });
+                        if (res.checkoutUrl) {
+                          window.location.assign(res.checkoutUrl);
+                        }
+                      } finally {
+                        setCheckoutLoadingPlan(null);
+                      }
+                    }}
+                    className="min-h-[42px] px-5 rounded-full border border-[var(--border-hairline)] bg-[var(--bg-surface)] text-[var(--text-primary)] font-bold inline-flex items-center justify-center gap-1.5 whitespace-nowrap cursor-pointer disabled:opacity-60"
                   >
-                    <span>Mensual {planSummary.monthlyPriceFormatted}</span>
-                  </a>
-                  <a
-                    href={appConfig.annualPaymentUrl || appConfig.paymentUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    onClick={() =>
+                    <span>
+                      {checkoutLoadingPlan === 'monthly'
+                        ? 'Abriendo...'
+                        : `Mensual ${planSummary.monthlyPriceFormatted}`}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    disabled={checkoutLoadingPlan !== null}
+                    onClick={async () => {
                       void trackFunnelStepOncePerSession('payment', {
                         source: 'app',
                         planType: 'annual',
-                      })
-                    }
+                      });
+                      setCheckoutLoadingPlan('annual');
+                      try {
+                        const res = await createEquilibrioCheckoutSession({
+                          profile,
+                          planType: 'annual',
+                          appConfig,
+                        });
+                        if (res.checkoutUrl) {
+                          window.location.assign(res.checkoutUrl);
+                        }
+                      } finally {
+                        setCheckoutLoadingPlan(null);
+                      }
+                    }}
                     style={{ backgroundColor: 'var(--btn-navy-bg)', color: 'var(--btn-navy-text)' }}
-                    className="min-h-[42px] px-5 rounded-full font-bold inline-flex items-center justify-center gap-1.5 whitespace-nowrap shadow-xs hover:opacity-92 transition-opacity"
+                    className="min-h-[42px] px-5 rounded-full font-bold inline-flex items-center justify-center gap-1.5 whitespace-nowrap shadow-xs hover:opacity-92 transition-opacity cursor-pointer disabled:opacity-60"
                   >
-                    <span>Anual {planSummary.annualPriceFormatted}</span>
+                    <span>
+                      {checkoutLoadingPlan === 'annual'
+                        ? 'Abriendo...'
+                        : `Anual ${planSummary.annualPriceFormatted}`}
+                    </span>
                     <ArrowRight className="w-3.5 h-3.5" />
-                  </a>
+                  </button>
                 </div>
               </SolidCard>
             )}
@@ -1656,7 +1791,7 @@ export default function App() {
                       <EditorialText text="¿Necesitas *ayuda* o quieres comentarnos algo?" />
                     </p>
                     <p className="text-xs text-[#CFC5EE] leading-relaxed">
-                      Si ya contrataste tu plan ($5.990 mensual o $50.000 anual) y tienes alguna
+                      Si ya contrataste tu plan ($5.990 mensual o $49.990 anual) y tienes alguna
                       consulta, sugerencia o necesitas asistencia, escríbenos. Puedes adjuntar
                       documentos o capturas directamente para el administrador ({appConfig.contactEmail}).
                     </p>

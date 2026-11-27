@@ -72,13 +72,13 @@ test('Calculadora pública: maneja precio <= costo variable, vacíos, ceros y ne
 test('Anclaje del plan anual calcula dinámicamente desde appConfig sin valores fijos en UI', () => {
   const launch = calculatePlanComparisonFromConfig({
     monthlyPriceClp: 5990,
-    annualPriceClp: 50000,
+    annualPriceClp: 49990,
     priceLabel: '$5.990 / mes',
   });
   assert.equal(launch.twelveMonthsTotalClp, 71880);
-  assert.equal(launch.savingsClp, 21880);
+  assert.equal(launch.savingsClp, 21890);
   assert.equal(launch.savingsPercentRounded, 30);
-  assert.equal(launch.equivalentMonthlyClp, 4167);
+  assert.equal(launch.equivalentMonthlyClp, 4166);
   assert.equal(launch.annualHighlightBadge, 'Más conveniente');
 
   const custom = calculatePlanComparisonFromConfig({

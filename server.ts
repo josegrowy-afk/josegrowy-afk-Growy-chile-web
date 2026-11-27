@@ -23,6 +23,18 @@ import {
   type ExcelOrderDoc,
 } from './server/excelDelivery';
 import {
+  activateEquilibrioPaymentIdempotent,
+  createEquilibrioCheckoutOrder,
+  fetchMercadoPagoPaymentById,
+  handleEquilibrioNonApprovedStatus,
+  recordUnmatchedPaymentInFirestore,
+  resolveEquilibrioTargetForApprovedPayment,
+  searchLatestMercadoPagoPaymentByExternalRef,
+  verifyAuthenticatedUserRequest,
+  verifyMercadoPagoWebhookSignature,
+} from './server/equilibrioPayments';
+import { getAdminTrafficStats, recordSiteAnalyticsPing } from './server/siteAnalytics';
+import {
   buildPaymentReminderNotification,
   toISODateLocal,
 } from './src/finance/subscription';
@@ -158,52 +170,64 @@ async function startServer() {
   });
 
   /**
-   * Webhook de pasarela de pago mensual Mercado Pago ($5.990) u otros proveedores.
-   * Acepta notificaciones IPN/Webhook de Mercado Pago (action/type payment) y webhooks genéricos HMAC.
+   * Webhook unificado de Mercado Pago (Equilibrio mensual/anual y Equilibrio Lite Excel).
+   * Valida x-signature (MP_WEBHOOK_SECRET), consulta GET /v1/payments/{id}, aplica idempotencia
+   * y revoca accesos en caso de reembolso o contracargo.
    */
   app.post(
     '/api/webhooks/payment',
     express.raw({ type: 'application/json' }),
     async (req, res) => {
       try {
-        const secret = process.env.PAYMENT_WEBHOOK_SECRET;
-        const signatureHeader = req.headers['x-webhook-signature'];
-        const rawBody = req.body as Buffer;
+        const rawBody = Buffer.isBuffer(req.body) ? req.body : Buffer.from('');
+        let payload: {
+          event?: string;
+          type?: string;
+          action?: string;
+          uid?: string;
+          email?: string;
+          paymentId?: string;
+          planType?: 'monthly' | 'annual';
+          status?: string;
+          external_reference?: string;
+          transaction_amount?: number;
+          data?: { id?: string | number };
+        } = {};
 
-        if (secret && secret !== 'reemplazar_por_secreto_hmac' && typeof signatureHeader === 'string') {
-          const expected = crypto
-            .createHmac('sha256', secret)
-            .update(rawBody)
-            .digest('hex');
-
-          const expectedBuf = Buffer.from(expected, 'utf8');
-          const receivedBuf = Buffer.from(signatureHeader, 'utf8');
-          if (
-            expectedBuf.length !== receivedBuf.length ||
-            !crypto.timingSafeEqual(expectedBuf, receivedBuf)
-          ) {
-            res.status(401).json({ error: 'Firma HMAC inválida.' });
+        if (rawBody.length > 0) {
+          try {
+            payload = JSON.parse(rawBody.toString('utf8')) as typeof payload;
+          } catch {
+            res.status(400).json({ error: 'JSON inválido en webhook de pago.' });
             return;
           }
         }
 
-        const parsedRaw =
-          rawBody && rawBody.length > 0
-            ? (JSON.parse(rawBody.toString('utf8')) as {
-                event?: string;
-                type?: string;
-                action?: string;
-                uid?: string;
-                email?: string;
-                paymentId?: string;
-                planType?: 'monthly' | 'annual';
-                status?: string;
-                external_reference?: string;
-                data?: { id?: string | number };
-              })
-            : {};
+        const sigCheck = verifyMercadoPagoWebhookSignature({
+          req,
+          rawBody,
+          parsedBody: payload as Record<string, unknown>,
+        });
+        if (!sigCheck.ok) {
+          res.status(401).json({ error: sigCheck.reason || 'Firma de webhook inválida.' });
+          return;
+        }
 
-        const queryType = typeof req.query.type === 'string' ? req.query.type : typeof req.query.topic === 'string' ? req.query.topic : undefined;
+        const mpToken = process.env.MERCADOPAGO_ACCESS_TOKEN?.trim();
+        if (!sigCheck.verifiedWithSecret && !mpToken) {
+          res.status(401).json({
+            error:
+              'Webhook rechazado: configura MP_WEBHOOK_SECRET o MERCADOPAGO_ACCESS_TOKEN en el servidor para validar pagos.',
+          });
+          return;
+        }
+
+        const queryType =
+          typeof req.query.type === 'string'
+            ? req.query.type
+            : typeof req.query.topic === 'string'
+              ? req.query.topic
+              : undefined;
         const queryDataId =
           typeof req.query['data.id'] === 'string'
             ? req.query['data.id']
@@ -211,78 +235,303 @@ async function startServer() {
               ? req.query.id
               : undefined;
 
-        const payload = parsedRaw;
         const eventType = payload.type || queryType;
-        const mpPaymentId = payload.data?.id
+        let mpPaymentId = payload.data?.id
           ? String(payload.data.id)
           : payload.paymentId || queryDataId;
-        let isPaid = payload.status === 'paid' || payload.status === 'approved' || payload.event === 'payment.succeeded';
-        let detectedPlan: 'monthly' | 'annual' = payload.planType === 'annual' ? 'annual' : 'monthly';
-        let detectedExternalRef: string | undefined = payload.external_reference;
-        let mpApprovedAmount = 0;
 
-        // Si viene un evento de Mercado Pago y hay MERCADOPAGO_ACCESS_TOKEN, consultar estado real en API de Mercado Pago
-        if ((eventType === 'payment' || payload.action?.startsWith('payment.')) && mpPaymentId && process.env.MERCADOPAGO_ACCESS_TOKEN) {
-          const mpRes = await fetch(`https://api.mercadopago.com/v1/payments/${encodeURIComponent(mpPaymentId)}`, {
-            headers: {
-              Authorization: `Bearer ${process.env.MERCADOPAGO_ACCESS_TOKEN}`,
-            },
-          });
-          if (mpRes.ok) {
-            const mpData = (await mpRes.json()) as {
-              status?: string;
-              transaction_amount?: number;
-              external_reference?: string;
-              currency_id?: string;
-            };
+        let effectiveStatus = String(
+          payload.status || (payload.event === 'payment.succeeded' ? 'approved' : '')
+        ).toLowerCase();
+        let detectedPlan: PlanType = payload.planType === 'annual' ? 'annual' : 'monthly';
+        let detectedExternalRef: string | undefined = payload.external_reference;
+        let mpApprovedAmount = Number(payload.transaction_amount ?? 0);
+        let mpCurrency = 'CLP';
+        let payerEmail: string | undefined =
+          typeof payload.email === 'string' ? payload.email.trim().toLowerCase() : undefined;
+        let mpMetadata: Record<string, unknown> | undefined;
+
+        let isSubscriptionPreapprovalAuthorized = false;
+        let preapprovalIdFromEvent: string | undefined;
+
+        // Consultar estado autoritativo en API de Mercado Pago siempre que haya token configurado
+        if (
+          (eventType === 'payment' ||
+            payload.action?.startsWith('payment.') ||
+            Boolean(mpPaymentId)) &&
+          mpPaymentId &&
+          mpToken &&
+          eventType !== 'subscription_preapproval' &&
+          eventType !== 'subscription_authorized_payment'
+        ) {
+          const mpData = await fetchMercadoPagoPaymentById(mpPaymentId);
+          if (mpData) {
+            effectiveStatus = mpData.status;
             detectedExternalRef = mpData.external_reference || detectedExternalRef;
-            mpApprovedAmount = Number(mpData.transaction_amount ?? 0);
-            if (mpData.status === 'approved') {
-              isPaid = true;
+            mpApprovedAmount = mpData.transaction_amount;
+            mpCurrency = mpData.currency_id;
+            payerEmail = mpData.payerEmail || payerEmail;
+            mpMetadata = mpData.metadata;
+            if (mpApprovedAmount >= 45000) {
+              detectedPlan = 'annual';
             }
-            if ((mpData.transaction_amount ?? 0) >= 45000) {
+          }
+        } else if (
+          eventType === 'subscription_authorized_payment' &&
+          mpPaymentId &&
+          mpToken
+        ) {
+          const authPayRes = await fetch(
+            `https://api.mercadopago.com/authorized_payments/${encodeURIComponent(mpPaymentId)}`,
+            {
+              headers: {
+                Authorization: `Bearer ${mpToken}`,
+              },
+            }
+          );
+          if (authPayRes.ok) {
+            const authPayData = (await authPayRes.json()) as {
+              status?: string;
+              preapproval_id?: string;
+              external_reference?: string;
+              transaction_amount?: number;
+              currency_id?: string;
+              payment?: { id?: string | number; status?: string };
+            };
+            preapprovalIdFromEvent = authPayData.preapproval_id;
+            const underlyingPaymentId = authPayData.payment?.id
+              ? String(authPayData.payment.id)
+              : undefined;
+            if (underlyingPaymentId) {
+              // Usar el ID real del pago para compartir idempotencia con eventos `type: payment`
+              const mpData = await fetchMercadoPagoPaymentById(underlyingPaymentId);
+              if (mpData) {
+                effectiveStatus = mpData.status;
+                detectedExternalRef =
+                  mpData.external_reference || authPayData.external_reference || detectedExternalRef;
+                mpApprovedAmount = mpData.transaction_amount;
+                mpCurrency = mpData.currency_id;
+                payerEmail = mpData.payerEmail || payerEmail;
+                mpMetadata = mpData.metadata;
+                mpPaymentId = underlyingPaymentId;
+                payload.paymentId = underlyingPaymentId;
+                if (payload.data) {
+                  payload.data.id = underlyingPaymentId;
+                }
+              }
+            }
+            if ((!payerEmail || detectedPlan !== 'annual') && authPayData.preapproval_id) {
+              const preRes = await fetch(
+                `https://api.mercadopago.com/preapproval/${encodeURIComponent(authPayData.preapproval_id)}`,
+                {
+                  headers: { Authorization: `Bearer ${mpToken}` },
+                }
+              );
+              if (preRes.ok) {
+                const preData = (await preRes.json()) as {
+                  external_reference?: string;
+                  payer_email?: string;
+                  auto_recurring?: {
+                    frequency?: number;
+                    frequency_type?: string;
+                    transaction_amount?: number;
+                    currency_id?: string;
+                  };
+                };
+                detectedExternalRef = detectedExternalRef || preData.external_reference;
+                payerEmail = payerEmail || preData.payer_email?.trim().toLowerCase();
+                if (
+                  preData.auto_recurring?.frequency === 12 ||
+                  Number(preData.auto_recurring?.transaction_amount ?? 0) >= 45000
+                ) {
+                  detectedPlan = 'annual';
+                }
+              }
+            }
+            if (!effectiveStatus) {
+              const rawAuthStatus = String(
+                authPayData.payment?.status || authPayData.status || ''
+              ).toLowerCase();
+              effectiveStatus =
+                rawAuthStatus === 'processed' || rawAuthStatus === 'authorized'
+                  ? 'approved'
+                  : rawAuthStatus;
+            }
+            if (!mpApprovedAmount) {
+              mpApprovedAmount = Number(authPayData.transaction_amount ?? 0);
+            }
+            if (authPayData.currency_id) {
+              mpCurrency = String(authPayData.currency_id).toUpperCase();
+            }
+            if (mpApprovedAmount >= 45000) {
               detectedPlan = 'annual';
             }
           }
         } else if (
           (eventType === 'subscription_preapproval' ||
-            eventType === 'subscription_authorized_payment' ||
             payload.action?.includes('preapproval')) &&
           mpPaymentId &&
-          process.env.MERCADOPAGO_ACCESS_TOKEN
+          mpToken
         ) {
-          const preRes = await fetch(`https://api.mercadopago.com/preapproval/${encodeURIComponent(mpPaymentId)}`, {
-            headers: {
-              Authorization: `Bearer ${process.env.MERCADOPAGO_ACCESS_TOKEN}`,
-            },
-          });
+          preapprovalIdFromEvent = mpPaymentId;
+          const preRes = await fetch(
+            `https://api.mercadopago.com/preapproval/${encodeURIComponent(mpPaymentId)}`,
+            {
+              headers: {
+                Authorization: `Bearer ${mpToken}`,
+              },
+            }
+          );
           if (preRes.ok) {
             const preData = (await preRes.json()) as {
               status?: string;
-              auto_recurring?: { transaction_amount?: number };
+              external_reference?: string;
+              payer_email?: string;
+              auto_recurring?: {
+                frequency?: number;
+                frequency_type?: string;
+                transaction_amount?: number;
+                currency_id?: string;
+              };
             };
-            if (preData.status === 'authorized' || preData.status === 'approved') {
-              isPaid = true;
-            }
-            if ((preData.auto_recurring?.transaction_amount ?? 0) >= 45000) {
+            const preStatus = String(preData.status || '').toLowerCase();
+            effectiveStatus =
+              preStatus === 'authorized' || preStatus === 'approved' ? 'approved' : preStatus;
+            isSubscriptionPreapprovalAuthorized = effectiveStatus === 'approved';
+            detectedExternalRef = preData.external_reference || detectedExternalRef;
+            mpApprovedAmount = Number(preData.auto_recurring?.transaction_amount ?? 0);
+            mpCurrency = String(preData.auto_recurring?.currency_id || 'CLP').toUpperCase();
+            payerEmail = preData.payer_email?.trim().toLowerCase() || payerEmail;
+            if (
+              preData.auto_recurring?.frequency === 12 ||
+              mpApprovedAmount >= 45000
+            ) {
               detectedPlan = 'annual';
             }
           }
         }
 
-        // Si corresponde a una orden única de Equilibrio Lite Excel (external_reference = exl_...), procesarla de forma idempotente sin tocar Equilibrio SaaS
-        if (isPaid && detectedExternalRef && detectedExternalRef.startsWith('exl_')) {
+        const isApproved = effectiveStatus === 'approved' || effectiveStatus === 'paid';
+
+        // 0. Autorización de suscripción (`subscription_preapproval` authorized): solo sincroniza estado de débito automático
+        // para no duplicar la extensión de vigencia que procesará el pago efectivo (`payment` / `subscription_authorized_payment`).
+        if (isSubscriptionPreapprovalAuthorized && preapprovalIdFromEvent) {
+          try {
+            const target = await resolveEquilibrioTargetForApprovedPayment({
+              mpPaymentId: preapprovalIdFromEvent,
+              amountCLP: mpApprovedAmount,
+              externalReference: detectedExternalRef,
+              payerEmail,
+              metadata: mpMetadata,
+              uidHint: payload.uid,
+              planHint: detectedPlan,
+            });
+            if (target.found) {
+              const { db } = getFirebaseAdminContext();
+              await db.collection('users').doc(target.uid).set(
+                {
+                  mpPreapprovalId: preapprovalIdFromEvent.slice(0, 120),
+                  mpSubscriptionStatus: 'authorized',
+                  autoRenewEnabled: true,
+                  updatedAt: FieldValue.serverTimestamp(),
+                },
+                { merge: true }
+              );
+            }
+          } catch (preSyncErr) {
+            if (!isAdminCredentialError(preSyncErr)) {
+              console.error('[Webhook Preapproval] Error sincronizando suscripción:', preSyncErr);
+            }
+          }
+          res.status(200).json({
+            received: true,
+            subscriptionAuthorized: true,
+            preapprovalId: preapprovalIdFromEvent,
+          });
+          return;
+        }
+
+        // 1. Manejo de estados NO aprobados (reembolsos, contracargos, rechazos, pendientes)
+        if (!isApproved) {
+          try {
+            if (
+              detectedExternalRef?.startsWith('exl_') &&
+              (effectiveStatus === 'refunded' || effectiveStatus === 'charged_back')
+            ) {
+              const { db } = getFirebaseAdminContext();
+              await db
+                .collection('excelOrders')
+                .doc(detectedExternalRef)
+                .set(
+                  {
+                    status: 'anulada',
+                    lastError: `Pago ${effectiveStatus} en Mercado Pago (${mpPaymentId ?? 'sin-id'})`,
+                  },
+                  { merge: true }
+                );
+              res.status(200).json({
+                received: true,
+                excelOrder: detectedExternalRef,
+                revoked: true,
+                status: effectiveStatus,
+              });
+              return;
+            }
+
+            if (mpPaymentId || detectedExternalRef || payload.uid || payerEmail) {
+              const nonApprovedOutcome = await handleEquilibrioNonApprovedStatus({
+                mpPaymentId: mpPaymentId || `evt_${Date.now()}`,
+                mpStatus: effectiveStatus || 'pending',
+                orderId: detectedExternalRef,
+                uidHint:
+                  typeof mpMetadata?.uid === 'string'
+                    ? mpMetadata.uid
+                    : payload.uid,
+                payerEmail,
+                amountCLP: mpApprovedAmount,
+                isPreapprovalEvent:
+                  eventType === 'subscription_preapproval' ||
+                  payload.action?.includes('preapproval'),
+              });
+              res.status(200).json({
+                received: true,
+                activated: false,
+                status: effectiveStatus || 'pending',
+                action: nonApprovedOutcome.action,
+              });
+              return;
+            }
+          } catch (nonApprovedErr) {
+            if (!isAdminCredentialError(nonApprovedErr)) {
+              console.error('[Webhook Pago] Error manejando estado no aprobado:', nonApprovedErr);
+            }
+          }
+
+          res.status(200).json({
+            received: true,
+            activated: false,
+            status: effectiveStatus || 'ignored',
+            reason: 'Evento pendiente o ignorado',
+          });
+          return;
+        }
+
+        // 2. Pago aprobado para Equilibrio Lite Excel (`external_reference = exl_...`)
+        if (detectedExternalRef && detectedExternalRef.startsWith('exl_')) {
           try {
             const { db } = getFirebaseAdminContext();
             const orderSnap = await db.collection('excelOrders').doc(detectedExternalRef).get();
             if (orderSnap.exists) {
               const order = orderSnap.data() as ExcelOrderDoc;
-              if (mpApprovedAmount > 0 && mpApprovedAmount < order.amountCLP) {
+              if (
+                (mpCurrency && mpCurrency !== 'CLP') ||
+                (mpApprovedAmount > 0 && mpApprovedAmount < order.amountCLP)
+              ) {
                 res.status(200).json({
                   received: true,
                   excelOrder: detectedExternalRef,
                   delivered: false,
-                  reason: 'Monto aprobado menor al esperado.',
+                  reason: 'Moneda o monto aprobado inferior al requerido.',
                 });
                 return;
               }
@@ -291,6 +540,27 @@ async function startServer() {
                 paymentReference: mpPaymentId ? `MP-${mpPaymentId}` : undefined,
                 baseUrl: getPublicAppBaseUrl(req),
               });
+              if (mpPaymentId && result.ok) {
+                const cleanId = mpPaymentId.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 100);
+                await db
+                  .collection('processedPayments')
+                  .doc(`mp_${cleanId}`)
+                  .set(
+                    {
+                      id: `mp_${cleanId}`,
+                      mpPaymentId: cleanId,
+                      productCode: 'excel_lite',
+                      email: order.email.toLowerCase(),
+                      orderId: detectedExternalRef,
+                      amountCLP: mpApprovedAmount || order.amountCLP,
+                      status: 'approved',
+                      outcome: 'activated',
+                      processedAt: new Date().toISOString(),
+                      createdAt: FieldValue.serverTimestamp(),
+                    },
+                    { merge: true }
+                  );
+              }
               res.status(200).json({
                 received: true,
                 excelOrder: detectedExternalRef,
@@ -307,27 +577,94 @@ async function startServer() {
           }
         }
 
-        if (!isPaid) {
-          res.status(200).json({ received: true, activated: false, reason: 'Evento pendiente o ignorado' });
-          return;
+        // 3. Pago aprobado para Equilibrio SaaS (Mensual o Anual)
+        try {
+          const target = await resolveEquilibrioTargetForApprovedPayment({
+            mpPaymentId: mpPaymentId || '',
+            amountCLP: mpApprovedAmount,
+            externalReference: detectedExternalRef,
+            payerEmail,
+            metadata: mpMetadata,
+            uidHint: payload.uid,
+            planHint: detectedPlan,
+          });
+
+          if (!target.found) {
+            if (mpPaymentId) {
+              await recordUnmatchedPaymentInFirestore({
+                mpPaymentId,
+                amountCLP: mpApprovedAmount,
+                payerEmail,
+                status: effectiveStatus,
+                reason: target.reason,
+                externalReference: detectedExternalRef,
+              });
+            }
+            res.status(200).json({
+              received: true,
+              activated: false,
+              paymentId: mpPaymentId ?? null,
+              reason: target.reason,
+            });
+            return;
+          }
+
+          if (
+            (mpCurrency && mpCurrency !== 'CLP') ||
+            (mpApprovedAmount > 0 && mpApprovedAmount < target.minExpectedCLP)
+          ) {
+            res.status(200).json({
+              received: true,
+              activated: false,
+              paymentId: mpPaymentId ?? null,
+              reason: 'Monto o moneda menor al valor del plan.',
+            });
+            return;
+          }
+
+          const effectivePaymentId = mpPaymentId || `wh_${Date.now().toString(36)}`;
+          const activation = await activateEquilibrioPaymentIdempotent({
+            mpPaymentId: effectivePaymentId,
+            uid: target.uid,
+            planType: target.planType,
+            billingDayHint: target.billingDayHint,
+            amountCLP: mpApprovedAmount || target.minExpectedCLP,
+            orderId: target.orderId,
+            payerEmail,
+          });
+
+          console.info(
+            `[Webhook Equilibrio ${target.planType === 'annual' ? '$49.990 Anual' : '$5.990 Mensual'}]`,
+            {
+              uid: target.uid,
+              paymentId: effectivePaymentId,
+              alreadyProcessed: activation.alreadyProcessed,
+              nextDue: activation.nextPaymentDueAt,
+              emailed: activation.emailed,
+            }
+          );
+
+          res.status(200).json({
+            received: true,
+            activated: activation.ok,
+            alreadyProcessed: activation.alreadyProcessed,
+            paymentId: effectivePaymentId,
+            planType: activation.planType,
+            nextPaymentDueAt: activation.nextPaymentDueAt,
+          });
+        } catch (adminErr) {
+          if (isAdminCredentialError(adminErr)) {
+            res.status(200).json({
+              received: true,
+              activated: false,
+              paymentId: mpPaymentId ?? null,
+              planType: detectedPlan,
+              note: 'Webhook validado. Configura FIREBASE_SERVICE_ACCOUNT_JSON para activación automática en Firestore.',
+            });
+            return;
+          }
+          throw adminErr;
         }
-
-        console.info(`[Webhook Pago Mercado Pago ${detectedPlan === 'annual' ? '$50.000 Anual' : '$5.990 Mensual'}] Pago confirmado:`, {
-          uid: payload.uid,
-          email: payload.email,
-          paymentId: mpPaymentId,
-          planType: detectedPlan,
-        });
-
-        res.status(200).json({
-          received: true,
-          activated: Boolean(process.env.FIREBASE_SERVICE_ACCOUNT_JSON),
-          paymentId: mpPaymentId ?? null,
-          planType: detectedPlan,
-          note: process.env.FIREBASE_SERVICE_ACCOUNT_JSON
-            ? `Pago ${detectedPlan === 'annual' ? 'anual (12 meses)' : 'mensual'} validado para activación automática.`
-            : 'Webhook validado. Configura FIREBASE_SERVICE_ACCOUNT_JSON o activa manualmente desde el Panel Admin.',
-        });
       } catch (err) {
         console.error('[Webhook Pago] Error:', err);
         res.status(400).json({ error: 'Payload inválido en webhook de pago.' });
@@ -337,62 +674,233 @@ async function startServer() {
 
   app.use(express.json({ limit: '2mb' }));
 
-  app.post('/api/payments/mercadopago-verify', async (req, res) => {
+  /**
+   * Crear sesión Checkout Pro de Mercado Pago para Equilibrio (mensual o anual) con external_reference
+   * y metadata del usuario autenticado (con respaldo automático al link estático).
+   */
+  app.post('/api/payments/equilibrio-checkout', async (req, res) => {
+    const rate = checkIpRateLimit(req, 'create', 15, 15 * 60 * 1000);
+    if (!rate.allowed) {
+      res.status(429).json({
+        ok: false,
+        error: `Demasiados intentos seguidos. Intenta en ${rate.retryAfterSec} segundos.`,
+      });
+      return;
+    }
+
+    const authUser = await verifyAuthenticatedUserRequest(req);
+    if (!authUser.ok) {
+      res.status(authUser.status).json({ ok: false, error: authUser.error });
+      return;
+    }
+
+    const { planType, billingDay } = (req.body ?? {}) as {
+      planType?: PlanType;
+      billingDay?: BillingDay;
+    };
+    const resolvedPlan: PlanType = planType === 'annual' ? 'annual' : 'monthly';
+    const resolvedDay: BillingDay | undefined =
+      billingDay === 5 || billingDay === 15 || billingDay === 30 ? billingDay : undefined;
+
     try {
-      const { paymentId, uid, email, planType } = req.body as {
-        paymentId?: string;
-        uid?: string;
-        email?: string;
-        planType?: 'monthly' | 'annual';
-      };
-      if (!paymentId) {
-        res.status(400).json({ verified: false, activated: false, message: 'Falta paymentId.' });
+      const result = await createEquilibrioCheckoutOrder({
+        req,
+        uid: authUser.uid,
+        email: authUser.email,
+        displayName: authUser.displayName,
+        planType: resolvedPlan,
+        billingDay: resolvedDay,
+      });
+      res.status(200).json(result);
+    } catch (err) {
+      console.error('[Equilibrio Checkout] Error:', err);
+      res.status(500).json({
+        ok: false,
+        error: 'No pudimos preparar el enlace de pago en este momento.',
+      });
+    }
+  });
+
+  app.post('/api/payments/mercadopago-verify', async (req, res) => {
+    const rate = checkIpRateLimit(req, 'verify', 30, 15 * 60 * 1000);
+    if (!rate.allowed) {
+      res.status(429).json({
+        verified: false,
+        activated: false,
+        message: `Demasiadas verificaciones seguidas. Intenta en ${rate.retryAfterSec} segundos.`,
+      });
+      return;
+    }
+
+    try {
+      const authUser = await verifyAuthenticatedUserRequest(req);
+      if (!authUser.ok) {
+        res.status(authUser.status).json({
+          verified: false,
+          activated: false,
+          message: authUser.error,
+        });
         return;
       }
 
-      if (!process.env.MERCADOPAGO_ACCESS_TOKEN) {
+      const { paymentId, orderId, planType, billingDay } = req.body as {
+        paymentId?: string;
+        orderId?: string;
+        uid?: string;
+        email?: string;
+        planType?: PlanType;
+        billingDay?: BillingDay;
+      };
+
+      const verifiedUid = authUser.uid;
+      const verifiedEmail = authUser.email;
+
+      const cleanPaymentId =
+        typeof paymentId === 'string' && /^[a-zA-Z0-9_-]{3,80}$/.test(paymentId.trim())
+          ? paymentId.trim()
+          : '';
+      const cleanOrderId =
+        typeof orderId === 'string' && /^[a-zA-Z0-9_-]{6,128}$/.test(orderId.trim())
+          ? orderId.trim()
+          : '';
+
+      if (!cleanPaymentId && !cleanOrderId) {
+        res.status(400).json({
+          verified: false,
+          activated: false,
+          message: 'Falta paymentId o orderId para verificar.',
+        });
+        return;
+      }
+
+      if (!process.env.MERCADOPAGO_ACCESS_TOKEN?.trim()) {
         res.status(200).json({
           verified: false,
           activated: false,
           message:
-            'Recibimos el identificador de Mercado Pago. Si tu cuenta no se activa de inmediato, adjunta tu comprobante abajo para que el administrador la habilite.',
+            'Recibimos el retorno de Mercado Pago. Si tu cuenta no se activa automáticamente en segundos, adjunta tu comprobante abajo para que el administrador la habilite.',
         });
         return;
       }
 
-      const mpRes = await fetch(`https://api.mercadopago.com/v1/payments/${encodeURIComponent(paymentId)}`, {
-        headers: {
-          Authorization: `Bearer ${process.env.MERCADOPAGO_ACCESS_TOKEN}`,
-        },
-      });
-      if (!mpRes.ok) {
+      const mpData = cleanPaymentId
+        ? await fetchMercadoPagoPaymentById(cleanPaymentId)
+        : await searchLatestMercadoPagoPaymentByExternalRef(cleanOrderId);
+
+      if (!mpData) {
         res.status(200).json({
           verified: false,
           activated: false,
-          message: 'No pudimos consultar ese pago en Mercado Pago todavía.',
+          message: 'No pudimos consultar ese pago en Mercado Pago todavía. Intenta en unos segundos.',
         });
         return;
       }
 
-      const mpData = (await mpRes.json()) as { status?: string; transaction_amount?: number };
-      const approved = mpData.status === 'approved';
-      const isAnnualAmount = (mpData.transaction_amount ?? 0) >= 45000 || planType === 'annual';
-      console.info('[Verificación MP]', {
-        paymentId,
-        uid,
-        email,
-        status: mpData.status,
-        amount: mpData.transaction_amount,
-        detectedPlan: isAnnualAmount ? 'annual' : 'monthly',
-      });
-      res.status(200).json({
-        verified: approved,
-        activated: Boolean(approved && process.env.FIREBASE_SERVICE_ACCOUNT_JSON),
-        planType: isAnnualAmount ? 'annual' : 'monthly',
-        message: approved
-          ? `Pago ${isAnnualAmount ? 'anual ($50.000 · 12 meses)' : 'mensual ($5.990)'} aprobado en Mercado Pago. Si el espacio aún aparece bloqueado, adjunta la captura abajo para activación instantánea.`
-          : `Estado actual del pago en Mercado Pago: ${mpData.status ?? 'pendiente'}.`,
-      });
+      if (cleanOrderId && mpData.external_reference && mpData.external_reference !== cleanOrderId) {
+        res.status(200).json({
+          verified: false,
+          activated: false,
+          message: 'El identificador de pago no corresponde a esta orden.',
+        });
+        return;
+      }
+
+      if (mpData.status !== 'approved') {
+        try {
+          await handleEquilibrioNonApprovedStatus({
+            mpPaymentId: mpData.id || cleanPaymentId,
+            mpStatus: mpData.status,
+            orderId: cleanOrderId || mpData.external_reference,
+            uidHint: verifiedUid,
+            amountCLP: mpData.transaction_amount,
+          });
+        } catch {
+          // Ignorar si no hay credenciales Admin SDK locales
+        }
+        res.status(200).json({
+          verified: false,
+          activated: false,
+          status: mpData.status,
+          message: `Estado actual del pago en Mercado Pago: ${mpData.status || 'pendiente'}.`,
+        });
+        return;
+      }
+
+      const detectedPlan: PlanType =
+        mpData.transaction_amount >= 45000 || planType === 'annual' ? 'annual' : 'monthly';
+
+      try {
+        const target = await resolveEquilibrioTargetForApprovedPayment({
+          mpPaymentId: mpData.id,
+          amountCLP: mpData.transaction_amount,
+          externalReference: mpData.external_reference || cleanOrderId,
+          payerEmail: mpData.payerEmail || verifiedEmail,
+          metadata: mpData.metadata,
+          uidHint: verifiedUid,
+          planHint: detectedPlan,
+        });
+
+        if (!target.found) {
+          res.status(200).json({
+            verified: true,
+            activated: false,
+            planType: detectedPlan,
+            message:
+              'Pago aprobado en Mercado Pago, pero el correo pagador no coincide con tu cuenta. Adjunta tu comprobante abajo para vinculación instantánea.',
+          });
+          return;
+        }
+
+        if (verifiedUid && target.uid !== verifiedUid) {
+          res.status(403).json({
+            verified: false,
+            activated: false,
+            message: 'Este pago pertenece a otra cuenta de usuario.',
+          });
+          return;
+        }
+
+        if (mpData.currency_id !== 'CLP' || mpData.transaction_amount < target.minExpectedCLP) {
+          res.status(200).json({
+            verified: false,
+            activated: false,
+            message: 'El monto o moneda del pago no coincide con el plan seleccionado.',
+          });
+          return;
+        }
+
+        const activation = await activateEquilibrioPaymentIdempotent({
+          mpPaymentId: mpData.id,
+          uid: target.uid,
+          planType: target.planType,
+          billingDayHint: target.billingDayHint || billingDay,
+          amountCLP: mpData.transaction_amount,
+          orderId: target.orderId,
+          payerEmail: mpData.payerEmail || verifiedEmail,
+        });
+
+        res.status(200).json({
+          verified: true,
+          activated: activation.ok,
+          planType: activation.planType,
+          nextPaymentDueAt: activation.nextPaymentDueAt,
+          message: activation.ok
+            ? `¡Pago ${activation.planType === 'annual' ? 'anual ($49.990 · 12 meses)' : 'mensual ($5.990)'} confirmado! Tu acceso quedó activo automáticamente hasta el ${activation.nextPaymentDueAt}.`
+            : 'Pago aprobado en Mercado Pago. Adjunta tu comprobante abajo si el acceso tarda en reflejarse.',
+        });
+      } catch (adminErr) {
+        if (isAdminCredentialError(adminErr)) {
+          res.status(200).json({
+            verified: true,
+            activated: false,
+            planType: detectedPlan,
+            message:
+              `Pago ${detectedPlan === 'annual' ? 'anual ($49.990 · 12 meses)' : 'mensual ($5.990)'} aprobado en Mercado Pago. Si el espacio aún aparece bloqueado, adjunta la captura abajo.`,
+          });
+          return;
+        }
+        throw adminErr;
+      }
     } catch {
       res.status(200).json({
         verified: false,
@@ -426,9 +934,10 @@ async function startServer() {
       };
 
       const isAnnual = planType === 'annual';
-      const safeFallback = sanitizeBackUrl(
-        fallbackUrl || (isAnnual ? process.env.VITE_MERCADOPAGO_ANNUAL_PAYMENT_URL : process.env.VITE_MERCADOPAGO_PAYMENT_URL)
-      );
+      const defaultSubUrl = isAnnual
+        ? process.env.VITE_MERCADOPAGO_ANNUAL_SUBSCRIPTION_URL || 'https://mpago.la/2CSA14N'
+        : process.env.VITE_MERCADOPAGO_MONTHLY_SUBSCRIPTION_URL || 'https://mpago.la/2feqLfB';
+      const safeFallback = sanitizeBackUrl(fallbackUrl || defaultSubUrl);
       const cleanEmail = typeof email === 'string' ? email.trim().toLowerCase().slice(0, 160) : '';
 
       if (!process.env.MERCADOPAGO_ACCESS_TOKEN || !cleanEmail) {
@@ -437,13 +946,13 @@ async function startServer() {
           mode: 'manual_fallback',
           fallbackUrl: safeFallback,
           message:
-            'El cobro automático directo usa el link oficial de Mercado Pago como respaldo mientras no esté configurado MERCADOPAGO_ACCESS_TOKEN en el servidor.',
+            'Redirigiendo al plan oficial de suscripción automática de Mercado Pago.',
         });
         return;
       }
 
       const amount = isAnnual
-        ? Math.max(1000, Math.round(Number(annualPriceClp) || 50000))
+        ? Math.max(1000, Math.round(Number(annualPriceClp) || 49990))
         : Math.max(1000, Math.round(Number(monthlyPriceClp) || 5990));
 
       const mpRes = await fetch('https://api.mercadopago.com/preapproval', {
@@ -508,8 +1017,10 @@ async function startServer() {
       res.status(200).json({
         ok: true,
         mode: 'manual_fallback',
-        fallbackUrl: sanitizeBackUrl(process.env.VITE_MERCADOPAGO_PAYMENT_URL),
-        message: 'Abrimos el link directo de Mercado Pago como respaldo.',
+        fallbackUrl: sanitizeBackUrl(
+          process.env.VITE_MERCADOPAGO_MONTHLY_SUBSCRIPTION_URL || 'https://mpago.la/2feqLfB'
+        ),
+        message: 'Abrimos el link directo de suscripción de Mercado Pago como respaldo.',
       });
     }
   });
@@ -943,17 +1454,23 @@ async function startServer() {
         res.status(400).json({ ok: false, error: 'No se puede reenviar una orden anulada.' });
         return;
       }
-      if (order.status === 'pendiente') {
+      const confirmManualPayment = Boolean(
+        (req.body as { confirmManualPayment?: unknown })?.confirmManualPayment
+      );
+      if (order.status === 'pendiente' && !confirmManualPayment) {
         res.status(400).json({
           ok: false,
           error:
-            'La orden aún está pendiente de pago confirmado en Mercado Pago. Verifica el pago antes de reenviar.',
+            'La orden aún está pendiente de pago confirmado en Mercado Pago. Confirma el pago manualmente o espera el webhook antes de enviar.',
         });
         return;
       }
 
       const result = await fulfillExcelOrderIdempotent({
         orderId,
+        ...(confirmManualPayment && !order.paymentReference
+          ? { paymentReference: `MP-MANUAL-${authResult.email.slice(0, 40)}` }
+          : {}),
         baseUrl: getPublicAppBaseUrl(req),
         forceResend: true,
       });
@@ -962,7 +1479,7 @@ async function startServer() {
         ok: result.ok,
         status: result.status,
         message: result.ok
-          ? `Archivo reenviado a ${order.email} (${order.licenseId}).`
+          ? `Archivo enviado a ${order.email} (${order.licenseId}).`
           : result.message,
       });
     } catch (err) {
@@ -1018,6 +1535,49 @@ async function startServer() {
         return;
       }
       res.status(500).json({ ok: false, error: 'No se pudo anular la orden.' });
+    }
+  });
+
+  /**
+   * ============================================================================
+   * ESTADÍSTICAS EN VIVO Y VISITAS HISTÓRICAS (SOLO ADMINISTRADOR)
+   * ============================================================================
+   */
+  app.post('/api/analytics/track', async (req, res) => {
+    try {
+      const { sessionId, path: pagePath, isPageView } = (req.body ?? {}) as {
+        sessionId?: unknown;
+        path?: unknown;
+        isPageView?: unknown;
+      };
+      if (typeof sessionId !== 'string' || !/^[a-zA-Z0-9_-]{4,80}$/.test(sessionId.trim())) {
+        res.status(400).json({ ok: false });
+        return;
+      }
+      const result = await recordSiteAnalyticsPing({
+        sessionId: sessionId.trim(),
+        path: typeof pagePath === 'string' ? pagePath : '/',
+        isPageView: isPageView === true,
+      });
+      res.status(200).json({ ok: true, activeNow: result.activeNow, day: result.day });
+    } catch {
+      res.status(200).json({ ok: false });
+    }
+  });
+
+  app.get('/api/admin/stats', async (req, res) => {
+    const authResult = await verifyAdminRequest(req);
+    if (!authResult.ok) {
+      res.status(authResult.status).json({ ok: false, error: authResult.error });
+      return;
+    }
+
+    try {
+      const stats = await getAdminTrafficStats();
+      res.status(200).json(stats);
+    } catch (err) {
+      console.error('[Admin Stats] Error:', err);
+      res.status(500).json({ ok: false, error: 'No se pudieron obtener las estadísticas.' });
     }
   });
 
@@ -1180,7 +1740,7 @@ async function startServer() {
         planType === 'annual'
           ? 'Plan Anual GROWy (12 meses · Precio por lanzamiento)'
           : 'Plan Mensual GROWy (Precio por lanzamiento)';
-      const safeAmount = Math.max(0, Math.round(Number(amountClp) || (planType === 'annual' ? 50000 : 5990)));
+      const safeAmount = Math.max(0, Math.round(Number(amountClp) || (planType === 'annual' ? 49990 : 5990)));
       const formattedAmount = `$${safeAmount.toLocaleString('es-CL')} CLP`;
       const methodLabel =
         paymentMethod === 'codigo_acceso'
@@ -1780,14 +2340,65 @@ async function startServer() {
   const httpServer = http.createServer(app);
 
   if (!isProduction) {
+    if (process.env.ENABLE_HMR !== 'true' && process.env.DISABLE_HMR === undefined) {
+      process.env.DISABLE_HMR = 'true';
+    }
     const { createServer: createViteServer } = await import('vite');
+    const enableHmr = process.env.ENABLE_HMR === 'true' && process.env.DISABLE_HMR !== 'true';
     const vite = await createViteServer({
       server: {
         middlewareMode: true,
-        hmr: process.env.DISABLE_HMR === 'true' ? false : { server: httpServer },
+        hmr: enableHmr ? { server: httpServer } : false,
+        ws: enableHmr ? undefined : false,
       },
       appType: 'spa',
     });
+    if (!enableHmr) {
+      app.get('/@vite/client', (_req, res) => {
+        res.type('application/javascript; charset=utf-8');
+        res.setHeader('Cache-Control', 'no-cache');
+        res.send(`
+const sheetsMap = new Map();
+export function updateStyle(id, content) {
+  if (typeof document === 'undefined') return;
+  let style = sheetsMap.get(id);
+  if (!style) {
+    style = document.createElement('style');
+    style.setAttribute('type', 'text/css');
+    style.setAttribute('data-vite-dev-id', id);
+    style.textContent = content;
+    document.head.appendChild(style);
+    sheetsMap.set(id, style);
+  } else if (style.textContent !== content) {
+    style.textContent = content;
+  }
+}
+export function removeStyle(id) {
+  const style = sheetsMap.get(id);
+  if (style) {
+    if (style.parentNode) style.parentNode.removeChild(style);
+    sheetsMap.delete(id);
+  }
+}
+export function injectQuery(url) {
+  return url;
+}
+export function createHotContext() {
+  return {
+    data: {},
+    accept() {},
+    dispose() {},
+    prune() {},
+    invalidate() {},
+    on() {},
+    off() {},
+    send() {},
+  };
+}
+export class ErrorOverlay extends HTMLElement {}
+`);
+      });
+    }
     app.use(vite.middlewares);
   } else {
     const distDir = path.resolve(process.cwd(), 'dist');

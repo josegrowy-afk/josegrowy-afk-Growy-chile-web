@@ -387,6 +387,8 @@ export interface FunnelEventRecord {
 export interface AppConfig {
   paymentUrl: string;
   annualPaymentUrl?: string;
+  monthlySubscriptionUrl?: string;
+  annualSubscriptionUrl?: string;
   monthlyPriceClp?: number;
   annualPriceClp?: number;
   mpRecurringEnabled?: boolean;
@@ -573,4 +575,17 @@ export interface ExcelOrderRecord {
   deliveryAttempts: number;
   lastError?: string;
 }
+
+export interface AdminTrafficStats {
+  activeNow: number;
+  activeWindowSeconds: number;
+  viewsToday: number;
+  views15d: number;
+  views30d: number;
+  views90d: number;
+  dailySeries: Array<{ day: string; views: number }>;
+  persistenceMode: 'firestore' | 'memory';
+  generatedAt: string;
+}
+
 

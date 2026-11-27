@@ -11,7 +11,6 @@ import {
   Download,
   Eraser,
   FolderPlus,
-  Gift,
   Mail,
   Moon,
   Palette,
@@ -26,7 +25,6 @@ import {
   IVA_DISCLAIMER_TEXT,
   calculateOwnerSalaryImpact,
 } from '../finance/phase2Insights';
-import { REFERRAL_PROGRAM_RULES } from '../finance/phase3Insights';
 import {
   formatISODateSpanish,
   getSubscriptionStatus,
@@ -34,15 +32,14 @@ import {
   MONTHLY_PRICE_LABEL,
 } from '../finance/subscription';
 import {
+  createEquilibrioCheckoutSession,
   createMercadoPagoRecurringCheckout,
-  createReferralInviteCode,
   sendMonthlySummaryEmail,
-  subscribeUserReferralCodes,
+  trackFunnelStepOncePerSession,
   updateUserMonthlySummaryEmailPref,
 } from '../firebase/services';
 import { exportBackupJSON, parseAndValidateBackup } from '../storage/db';
 import type {
-  AccessCode,
   AppConfig,
   AppStorageState,
   BusinessWorkspace,
@@ -138,22 +135,10 @@ export const BusinessSettingsView: React.FC<BusinessSettingsViewProps> = ({
   const [sendingMonthlyEmail, setSendingMonthlyEmail] = useState(false);
   const [monthlyEmailFeedback, setMonthlyEmailFeedback] = useState<string | null>(null);
 
-  // 3.6 Referidos
-  const [referralCodes, setReferralCodes] = useState<AccessCode[]>([]);
-  const [creatingReferral, setCreatingReferral] = useState(false);
-  const [copiedRefCode, setCopiedRefCode] = useState<string | null>(null);
-
-  // 3.7 Débito automático Mercado Pago
+  // 3.7 Débito automático Mercado Pago y Checkout Pro
   const [mpAutoBusy, setMpAutoBusy] = useState(false);
+  const [checkoutBusy, setCheckoutBusy] = useState<'monthly' | 'annual' | null>(null);
   const [mpAutoNotice, setMpAutoNotice] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!profile?.uid) {
-      setReferralCodes([]);
-      return;
-    }
-    return subscribeUserReferralCodes(profile.uid, setReferralCodes);
-  }, [profile?.uid]);
 
   const handleToggleMonthlyEmail = async (enabled: boolean) => {
     if (!profile) return;
@@ -187,19 +172,6 @@ export const BusinessSettingsView: React.FC<BusinessSettingsViewProps> = ({
     }
   };
 
-  const handleCreateReferralCode = async () => {
-    if (!profile) return;
-    setCreatingReferral(true);
-    try {
-      const code = await createReferralInviteCode({ profile });
-      await navigator.clipboard?.writeText(code).catch(() => {});
-      setCopiedRefCode(code);
-      setTimeout(() => setCopiedRefCode(null), 2500);
-    } finally {
-      setCreatingReferral(false);
-    }
-  };
-
   const handleStartRecurringMp = async (planType: 'monthly' | 'annual') => {
     if (!profile || !appConfig) return;
     setMpAutoBusy(true);
@@ -217,6 +189,29 @@ export const BusinessSettingsView: React.FC<BusinessSettingsViewProps> = ({
       }
     } finally {
       setMpAutoBusy(false);
+    }
+  };
+
+  const handleCheckoutPlan = async (planType: 'monthly' | 'annual') => {
+    if (!profile || !appConfig) return;
+    void trackFunnelStepOncePerSession('payment', {
+      source: 'app',
+      planType,
+    });
+    setCheckoutBusy(planType);
+    setMpAutoNotice(null);
+    try {
+      const res = await createEquilibrioCheckoutSession({
+        profile,
+        planType,
+        appConfig,
+      });
+      setMpAutoNotice(res.message);
+      if (res.checkoutUrl && typeof window !== 'undefined') {
+        window.location.assign(res.checkoutUrl);
+      }
+    } finally {
+      setCheckoutBusy(null);
     }
   };
 
@@ -270,7 +265,7 @@ export const BusinessSettingsView: React.FC<BusinessSettingsViewProps> = ({
                   {subStatus?.isComplimentary
                     ? 'Cuenta cliente de prueba (sin cobro)'
                     : subStatus?.isAnnual
-                      ? 'Plan Anual GROWy ($50.000 / año · 12 meses)'
+                      ? 'Plan Anual GROWy ($49.990 / año · 12 meses)'
                       : `Plan mensual GROWy (${appConfig.priceLabel || MONTHLY_PRICE_LABEL})`}
                 </h2>
                 {!subStatus?.isComplimentary && (
@@ -313,8 +308,8 @@ export const BusinessSettingsView: React.FC<BusinessSettingsViewProps> = ({
                   {subStatus?.isComplimentary
                     ? 'Este correo está autorizado como cliente de prueba para visualizar la plataforma sin cobro ni bloqueo por vencimiento.'
                     : subStatus?.isAnnual
-                      ? 'Tu plan anual ($50.000, ahorras $21.880) no tiene cobros mensuales. Al cumplir 12 meses podrás renovar mensual o anual.'
-                      : 'Al llegar esa fecha cada mes, el acceso se pausa hasta renovar ($5.990/mes) o cambiar a Oferta Anual ($50.000/año, 30,44% dcto).'}
+                      ? 'Tu plan anual ($49.990, ahorras $21.890) no tiene cobros mensuales. Al cumplir 12 meses podrás renovar mensual o anual.'
+                      : 'Al llegar esa fecha cada mes, el acceso se pausa hasta renovar ($5.990/mes) o cambiar a Oferta Anual ($49.990/año, 30,45% dcto).'}
                 </p>
               </div>
             </div>
@@ -340,28 +335,28 @@ export const BusinessSettingsView: React.FC<BusinessSettingsViewProps> = ({
                     </span>
                   </button>
                 )}
-                <a
-                  href={appConfig.paymentUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center justify-center gap-2 min-h-[42px] px-4 py-2 rounded-full border border-[var(--border-hairline)] bg-[var(--bg-soft-alt)] hover:bg-[var(--bg-soft)] text-[var(--text-primary)] text-xs font-bold transition-colors"
+                <button
+                  type="button"
+                  disabled={checkoutBusy !== null || mpAutoBusy}
+                  onClick={() => void handleCheckoutPlan('monthly')}
+                  className="inline-flex items-center justify-center gap-2 min-h-[42px] px-4 py-2 rounded-full border border-[var(--border-hairline)] bg-[var(--bg-soft-alt)] hover:bg-[var(--bg-soft)] text-[var(--text-primary)] text-xs font-bold transition-colors cursor-pointer disabled:opacity-60"
                 >
-                  <span>Mensual $5.990</span>
+                  <span>{checkoutBusy === 'monthly' ? 'Abriendo...' : 'Mensual $5.990'}</span>
                   <ArrowRight className="w-3.5 h-3.5" />
-                </a>
-                <a
-                  href={appConfig.annualPaymentUrl || appConfig.paymentUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
+                </button>
+                <button
+                  type="button"
+                  disabled={checkoutBusy !== null || mpAutoBusy}
+                  onClick={() => void handleCheckoutPlan('annual')}
                   style={{
                     backgroundColor: 'var(--btn-navy-bg)',
                     color: 'var(--btn-navy-text)',
                   }}
-                  className="inline-flex items-center justify-center gap-2 min-h-[42px] px-5 py-2 rounded-full text-xs font-bold shadow-sm hover:opacity-92 transition-opacity"
+                  className="inline-flex items-center justify-center gap-2 min-h-[42px] px-5 py-2 rounded-full text-xs font-bold shadow-sm hover:opacity-92 transition-opacity cursor-pointer disabled:opacity-60"
                 >
-                  <span>Oferta Anual $50.000</span>
+                  <span>{checkoutBusy === 'annual' ? 'Abriendo...' : 'Oferta Anual $49.990'}</span>
                   <ArrowRight className="w-3.5 h-3.5" />
-                </a>
+                </button>
               </div>
             )}
           </div>
@@ -521,91 +516,6 @@ export const BusinessSettingsView: React.FC<BusinessSettingsViewProps> = ({
       {/* HISTORIAL DE PAGOS Y COMPROBANTES */}
       {profile && profile.role !== 'admin' && !subStatus?.isComplimentary && (
         <PaymentHistorySection profile={profile} entries={paymentHistory} />
-      )}
-
-      {/* 3.6 PROGRAMA DE REFERIDOS ("INVITA A OTRA PYME Y AMBOS GANAN UN MES") */}
-      {profile && profile.accessStatus === 'active' && (
-        <SolidCard as="section" className="p-6 space-y-4">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div className="flex items-start gap-3">
-              <div className="w-10 h-10 rounded-2xl bg-[var(--accent-soft)] flex items-center justify-center shrink-0">
-                <Gift className="w-5 h-5 text-[var(--accent-strong)]" />
-              </div>
-              <div>
-                <h2 className="font-display text-lg font-bold text-[var(--text-primary)]">
-                  Invita a otra pyme y ambos ganan un mes gratis
-                </h2>
-                <p className="text-xs text-[var(--text-secondary)] mt-0.5">
-                  Comparte tu código único <span className="font-mono">REF-...</span>. Meses
-                  ganados acreditados:{' '}
-                  <strong className="font-mono text-[var(--pos-text)]">
-                    {profile.referralMonthsEarned ?? 0}
-                  </strong>
-                </p>
-              </div>
-            </div>
-
-            <button
-              type="button"
-              disabled={creatingReferral}
-              onClick={() => void handleCreateReferralCode()}
-              style={{
-                backgroundColor: 'var(--btn-navy-bg)',
-                color: 'var(--btn-navy-text)',
-              }}
-              className="min-h-[42px] px-5 rounded-full text-xs font-bold inline-flex items-center gap-2 cursor-pointer disabled:opacity-60 shrink-0 shadow-xs hover:opacity-92 transition-opacity"
-            >
-              <Gift className="w-4 h-4" />
-              <span>{creatingReferral ? 'Creando...' : 'Generar código de invitación'}</span>
-            </button>
-          </div>
-
-          <ul className="text-[11px] text-[var(--text-secondary)] space-y-1 list-disc pl-5 bg-[var(--bg-soft-alt)] p-3.5 rounded-2xl border border-[var(--border-hairline)]">
-            {REFERRAL_PROGRAM_RULES.map((rule, idx) => (
-              <li key={idx}>{rule}</li>
-            ))}
-          </ul>
-
-          {referralCodes.length > 0 && (
-            <div className="divide-y divide-[var(--border-hairline)]">
-              {referralCodes.map((rc) => (
-                <div key={rc.code} className="py-2.5 flex flex-wrap items-center justify-between gap-2 text-xs">
-                  <div>
-                    <span className="font-mono font-bold text-[var(--text-primary)]">{rc.code}</span>
-                    <span className="ml-2 text-[var(--text-secondary)]">
-                      {rc.status === 'unused'
-                        ? 'Disponible para compartir'
-                        : rc.referrerRewardApplied
-                          ? `Canjeado por ${rc.usedByEmail || 'otra pyme'} · +1 mes acreditado`
-                          : `Canjeado por ${rc.usedByEmail || 'otra pyme'} · Bono +1 mes en revisión`}
-                    </span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      void navigator.clipboard?.writeText(rc.code);
-                      setCopiedRefCode(rc.code);
-                      setTimeout(() => setCopiedRefCode(null), 2000);
-                    }}
-                    className="min-h-[34px] px-3 rounded-full border border-[var(--border-hairline)] text-xs font-semibold inline-flex items-center gap-1 cursor-pointer hover:bg-[var(--bg-soft)]"
-                  >
-                    {copiedRefCode === rc.code ? (
-                      <>
-                        <Check className="w-3.5 h-3.5 text-[var(--pos-text)]" />
-                        <span>Copiado</span>
-                      </>
-                    ) : (
-                      <>
-                        <Copy className="w-3.5 h-3.5" />
-                        <span>Copiar</span>
-                      </>
-                    )}
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </SolidCard>
       )}
 
       {/* APARIENCIA Y PALETA DE COLORES */}

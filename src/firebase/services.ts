@@ -36,6 +36,7 @@ import type {
   AccessCode,
   AccessStatus,
   AdminLogEntry,
+  AdminTrafficStats,
   AppConfig,
   BillingDay,
   BusinessWorkspace,
@@ -67,11 +68,37 @@ export const BOOTSTRAPPED_ADMIN_EMAIL = 'jose.growy@gmail.com';
 export const DEFAULT_MERCADOPAGO_URL =
   import.meta.env.VITE_MERCADOPAGO_PAYMENT_URL ||
   import.meta.env.VITE_PAYMENT_URL ||
-  'https://mpago.la/2JwG16F';
+  'https://mpago.la/1muS2bx';
 
 export const DEFAULT_ANNUAL_MERCADOPAGO_URL =
   import.meta.env.VITE_MERCADOPAGO_ANNUAL_PAYMENT_URL ||
-  'https://mpago.la/2JwG16F';
+  'https://mpago.la/1htV6zn';
+
+export const DEFAULT_MONTHLY_SUBSCRIPTION_URL =
+  import.meta.env.VITE_MERCADOPAGO_MONTHLY_SUBSCRIPTION_URL ||
+  'https://mpago.la/2feqLfB';
+
+export const DEFAULT_ANNUAL_SUBSCRIPTION_URL =
+  import.meta.env.VITE_MERCADOPAGO_ANNUAL_SUBSCRIPTION_URL ||
+  'https://mpago.la/2CSA14N';
+
+export const DEFAULT_EXCEL_MERCADOPAGO_URL =
+  import.meta.env.VITE_MERCADOPAGO_EXCEL_PAYMENT_URL ||
+  'https://mpago.la/2QPhp4N';
+
+const LEGACY_MONTHLY_PAYMENT_URLS = new Set([
+  'https://mpago.la/2WauQDR',
+  'https://mpago.la/2JwG16F',
+]);
+
+const LEGACY_ANNUAL_PAYMENT_URLS = new Set([
+  'https://mpago.la/2JwG16F',
+  'https://mpago.la/2WauQDR',
+]);
+
+const LEGACY_EXCEL_PAYMENT_URLS = new Set([
+  'https://mpago.la/2SUfb1A',
+]);
 
 function isPlaceholderPaymentUrl(url?: string): boolean {
   if (!url) return true;
@@ -79,6 +106,18 @@ function isPlaceholderPaymentUrl(url?: string): boolean {
     url.includes('tu-pasarela-de-pago.ejemplo') ||
     url.includes('tu-link-growy-5990')
   );
+}
+
+function isLegacyOrPlaceholderMonthlyUrl(url?: string): boolean {
+  return isPlaceholderPaymentUrl(url) || LEGACY_MONTHLY_PAYMENT_URLS.has((url ?? '').trim());
+}
+
+function isLegacyOrPlaceholderAnnualUrl(url?: string): boolean {
+  return isPlaceholderPaymentUrl(url) || LEGACY_ANNUAL_PAYMENT_URLS.has((url ?? '').trim());
+}
+
+function isLegacyOrPlaceholderExcelUrl(url?: string): boolean {
+  return isPlaceholderPaymentUrl(url) || LEGACY_EXCEL_PAYMENT_URLS.has((url ?? '').trim());
 }
 
 export const DEFAULT_LANDING_CONTENT: LandingContentConfig = {
@@ -141,7 +180,7 @@ export const DEFAULT_LANDING_CONTENT: LandingContentConfig = {
   ].join('\n'),
   equilibrioCtaLabel: 'Suscribirme ($5.990 / mes)',
   equilibrioTrustNote:
-    'Pago seguro vía Mercado Pago ($5.990/mes o $50.000/año por 12 meses). Al cumplirse tu ciclo mensual o anual, la página pausa el acceso hasta que renueves mensual o anual con tu link de pago.',
+    'Pago seguro vía Mercado Pago ($5.990/mes o $49.990/año por 12 meses). Al cumplirse tu ciclo mensual o anual, la página pausa el acceso hasta que renueves mensual o anual con tu link de pago.',
   upcomingEyebrow: 'Próximamente',
   upcomingTitle: 'Equilibrio es el primer paso',
   upcomingSubtitle:
@@ -167,7 +206,7 @@ export const DEFAULT_LANDING_CONTENT: LandingContentConfig = {
     'Las planillas de Excel se enredan o se rompen justo cuando necesitas tomar una decisión rápida.',
   ].join('\n'),
   priceComparisonText:
-    'Por menos de lo que cuesta un café con pastel al mes ($5.990/mes, o ~$4.167/mes en el plan anual), ordenas los números de tu pyme todo el año.',
+    'Por menos de lo que cuesta un café con pastel al mes ($5.990/mes, o ~$4.166/mes en el plan anual), ordenas los números de tu pyme todo el año.',
   privacyTitle: 'Tus datos son privados y solo tuyos',
   privacyBody:
     'Tu información se guarda aislada en tu cuenta personal sobre Google Cloud Firestore. Nunca te pedimos claves del banco, ni credenciales tributarias, ni acceso a tus cuentas corrientes. Tampoco vendemos ni compartimos tus cifras con terceros.',
@@ -205,29 +244,31 @@ export const DEFAULT_LANDING_CONTENT: LandingContentConfig = {
 export const DEFAULT_APP_CONFIG: AppConfig = {
   paymentUrl: DEFAULT_MERCADOPAGO_URL,
   annualPaymentUrl: DEFAULT_ANNUAL_MERCADOPAGO_URL,
+  monthlySubscriptionUrl: DEFAULT_MONTHLY_SUBSCRIPTION_URL,
+  annualSubscriptionUrl: DEFAULT_ANNUAL_SUBSCRIPTION_URL,
   monthlyPriceClp: MONTHLY_PRICE_CLP,
   annualPriceClp: ANNUAL_PRICE_CLP,
   mpRecurringEnabled: true,
   priceLabel: MONTHLY_PRICE_LABEL,
-  currencyNote: 'O $50.000 / año (12 meses · ahorras $21.880)',
+  currencyNote: 'O $49.990 / año (12 meses · ahorras $21.890)',
   heroTitle: 'La creatividad *sueña*, los números la sostienen.',
   heroSubtitle:
     'Growy te explica tus cifras de forma simple, para que te dediques a hacer crecer lo que imaginas.',
   guaranteeText:
-    'Elige $5.990/mes o $50.000/año (12 meses) en Mercado Pago. Al vencer el mes o el año, el acceso se pausa hasta renovar con tu link de pago.',
+    'Elige $5.990/mes o $49.990/año (12 meses) en Mercado Pago. Al vencer el mes o el año, el acceso se pausa hasta renovar con tu link de pago.',
   refundGuaranteeText:
     'Garantía de tranquilidad: si pruebas Equilibrio durante tus primeros 7 días y sientes que no te da claridad, escríbenos y te devolvemos el 100% de tu pago.',
   whatsappUrl: '',
   testimonials: [],
   contactEmail: BOOTSTRAPPED_ADMIN_EMAIL,
   welcomeMessage:
-    'Bienvenido a Growy. Activa tu acceso a Equilibrio eligiendo tu plan mensual ($5.990/mes) o anual ($50.000/año) o ingresando tu código.',
+    'Bienvenido a Growy. Activa tu acceso a Equilibrio eligiendo tu plan mensual ($5.990/mes) o anual ($49.990/año) o ingresando tu código.',
   announcementText: '',
   announcementActive: false,
   excelProductName: 'Equilibrio Lite Excel',
   excelPriceLabel: '$4.990 CLP',
   excelPriceAmount: 4990,
-  excelPaymentUrl: '',
+  excelPaymentUrl: DEFAULT_EXCEL_MERCADOPAGO_URL,
   excelActive: true,
   landingContent: DEFAULT_LANDING_CONTENT,
 };
@@ -273,7 +314,7 @@ export const DEFAULT_FAQS: Array<Omit<FaqItem, 'createdAt' | 'updatedAt'>> = [
     id: 'faq-pago-unico',
     question: '¿Cuánto cuesta Equilibrio y qué pasa cuando vence el mes o el año?',
     answer:
-      'Puedes elegir Plan Mensual por $5.990 al mes (escogiendo fecha de pago los días 5, 15 o 30) o Plan Anual por $50.000 por 12 meses completos (ahorras $21.880 frente al valor mensual). Al cumplirse tu ciclo mensual o los 12 meses del plan anual, la página bloquea el acceso y te muestra los enlaces de pago de Mercado Pago para renovar en modalidad mensual o anual.',
+      'Puedes elegir Plan Mensual por $5.990 al mes (escogiendo fecha de pago los días 5, 15 o 30) o Plan Anual por $49.990 por 12 meses completos (ahorras $21.890 frente al valor mensual). Al cumplirse tu ciclo mensual o los 12 meses del plan anual, la página bloquea el acceso y te muestra los enlaces de pago de Mercado Pago para renovar en modalidad mensual o anual.',
     category: 'pagos',
     order: 5,
     published: true,
@@ -368,6 +409,12 @@ function migrateLandingContent(raw?: Partial<LandingContentConfig>): Partial<Lan
   if (raw.creatorRole === 'Contador Auditor · Especialista en innovación y automatización de procesos') {
     next.creatorRole = DEFAULT_LANDING_CONTENT.creatorRole;
   }
+  if (raw.equilibrioTrustNote?.includes('$50.000')) {
+    next.equilibrioTrustNote = raw.equilibrioTrustNote.replace(/\$50\.000/g, '$49.990');
+  }
+  if (raw.priceComparisonText?.includes('$4.167')) {
+    next.priceComparisonText = raw.priceComparisonText.replace(/\$4\.167/g, '$4.166');
+  }
   return next;
 }
 
@@ -381,11 +428,11 @@ export function subscribeAppConfig(onUpdate: (config: AppConfig) => void): () =>
     (snap) => {
       if (snap.exists()) {
         const remote = snap.data() as AppConfig;
-        const effectivePaymentUrl = isPlaceholderPaymentUrl(remote.paymentUrl)
+        const effectivePaymentUrl = isLegacyOrPlaceholderMonthlyUrl(remote.paymentUrl)
           ? DEFAULT_APP_CONFIG.paymentUrl
           : remote.paymentUrl;
         const effectiveAnnualPaymentUrl =
-          isPlaceholderPaymentUrl(remote.annualPaymentUrl) ||
+          isLegacyOrPlaceholderAnnualUrl(remote.annualPaymentUrl) ||
           remote.annualPaymentUrl === DEFAULT_MERCADOPAGO_URL
             ? DEFAULT_ANNUAL_MERCADOPAGO_URL
             : remote.annualPaymentUrl;
@@ -397,6 +444,8 @@ export function subscribeAppConfig(onUpdate: (config: AppConfig) => void): () =>
           remote.priceLabel === '$50.000 CLP' ||
           (remote.currencyNote ?? '').toLowerCase().includes('sin mensualidades') ||
           (remote.currencyNote ?? '').toLowerCase().includes('pago único');
+
+        const isLegacyAnnualAmount = remote.annualPriceClp === 50000;
 
         const migratedLanding = migrateLandingContent(remote.landingContent);
         if (
@@ -410,6 +459,17 @@ export function subscribeAppConfig(onUpdate: (config: AppConfig) => void): () =>
           migratedLanding.equilibrioCtaLabel = DEFAULT_LANDING_CONTENT.equilibrioCtaLabel;
         }
 
+        const effectiveCurrencyNote = isErroneousOneTimePricing
+          ? DEFAULT_APP_CONFIG.currencyNote
+          : (remote.currencyNote || DEFAULT_APP_CONFIG.currencyNote)
+              .replace(/\$50\.000/g, '$49.990')
+              .replace(/\$21\.880/g, '$21.890');
+        const effectiveGuaranteeText = (remote.guaranteeText || DEFAULT_APP_CONFIG.guaranteeText)
+          .replace(/\$50\.000/g, '$49.990')
+          .replace(/\$21\.880/g, '$21.890');
+        const effectiveWelcomeMessage = (remote.welcomeMessage || DEFAULT_APP_CONFIG.welcomeMessage)
+          .replace(/\$50\.000/g, '$49.990');
+
         onUpdate({
           ...DEFAULT_APP_CONFIG,
           ...remote,
@@ -422,17 +482,27 @@ export function subscribeAppConfig(onUpdate: (config: AppConfig) => void): () =>
           priceLabel: isErroneousOneTimePricing
             ? DEFAULT_APP_CONFIG.priceLabel
             : remote.priceLabel || DEFAULT_APP_CONFIG.priceLabel,
-          currencyNote: isErroneousOneTimePricing
-            ? DEFAULT_APP_CONFIG.currencyNote
-            : remote.currencyNote || DEFAULT_APP_CONFIG.currencyNote,
+          currencyNote: effectiveCurrencyNote,
+          guaranteeText: effectiveGuaranteeText,
+          welcomeMessage: effectiveWelcomeMessage,
           paymentUrl: effectivePaymentUrl,
           annualPaymentUrl: effectiveAnnualPaymentUrl,
+          monthlySubscriptionUrl:
+            remote.monthlySubscriptionUrl && !isPlaceholderPaymentUrl(remote.monthlySubscriptionUrl)
+              ? remote.monthlySubscriptionUrl
+              : DEFAULT_MONTHLY_SUBSCRIPTION_URL,
+          annualSubscriptionUrl:
+            remote.annualSubscriptionUrl && !isPlaceholderPaymentUrl(remote.annualSubscriptionUrl)
+              ? remote.annualSubscriptionUrl
+              : DEFAULT_ANNUAL_SUBSCRIPTION_URL,
           monthlyPriceClp:
             typeof remote.monthlyPriceClp === 'number' && remote.monthlyPriceClp > 0
               ? Math.round(remote.monthlyPriceClp)
               : MONTHLY_PRICE_CLP,
           annualPriceClp:
-            typeof remote.annualPriceClp === 'number' && remote.annualPriceClp > 0
+            typeof remote.annualPriceClp === 'number' &&
+            remote.annualPriceClp > 0 &&
+            !isLegacyAnnualAmount
               ? Math.round(remote.annualPriceClp)
               : ANNUAL_PRICE_CLP,
           mpRecurringEnabled: remote.mpRecurringEnabled !== false,
@@ -444,7 +514,10 @@ export function subscribeAppConfig(onUpdate: (config: AppConfig) => void): () =>
             typeof remote.excelPriceAmount === 'number' && remote.excelPriceAmount > 0
               ? Math.round(remote.excelPriceAmount)
               : DEFAULT_APP_CONFIG.excelPriceAmount,
-          excelPaymentUrl: remote.excelPaymentUrl ?? DEFAULT_APP_CONFIG.excelPaymentUrl,
+          excelPaymentUrl:
+            remote.excelPaymentUrl && !isLegacyOrPlaceholderExcelUrl(remote.excelPaymentUrl)
+              ? remote.excelPaymentUrl
+              : DEFAULT_EXCEL_MERCADOPAGO_URL,
           excelActive: remote.excelActive !== false,
           landingContent: {
             ...DEFAULT_LANDING_CONTENT,
@@ -500,6 +573,8 @@ export async function ensureAdminSeedDefaults(): Promise<void> {
         !data.landingContent ||
         data.landingContent.creatorName === 'José Ignacio Acuña' ||
         data.landingContent.creatorBio?.includes('José Ignacio Acuña') ||
+        data.landingContent.equilibrioTrustNote?.includes('$50.000') ||
+        data.landingContent.priceComparisonText?.includes('$4.167') ||
         !data.landingContent.step1Title ||
         data.landingContent.equilibrioCtaLabel === 'Comprar acceso' ||
         data.landingContent.equilibrioTrustNote ===
@@ -520,11 +595,48 @@ export async function ensureAdminSeedDefaults(): Promise<void> {
           ...migratedLanding,
         };
       }
-      if (isPlaceholderPaymentUrl(data.paymentUrl)) {
+      if (isLegacyOrPlaceholderMonthlyUrl(data.paymentUrl)) {
         patch.paymentUrl = DEFAULT_APP_CONFIG.paymentUrl;
       }
-      if (isPlaceholderPaymentUrl(data.annualPaymentUrl)) {
+      if (isLegacyOrPlaceholderAnnualUrl(data.annualPaymentUrl)) {
         patch.annualPaymentUrl = DEFAULT_APP_CONFIG.annualPaymentUrl;
+      }
+      if (!data.monthlySubscriptionUrl || isPlaceholderPaymentUrl(data.monthlySubscriptionUrl)) {
+        patch.monthlySubscriptionUrl = DEFAULT_MONTHLY_SUBSCRIPTION_URL;
+      }
+      if (!data.annualSubscriptionUrl || isPlaceholderPaymentUrl(data.annualSubscriptionUrl)) {
+        patch.annualSubscriptionUrl = DEFAULT_ANNUAL_SUBSCRIPTION_URL;
+      }
+      if (data.annualPriceClp === 50000) {
+        patch.annualPriceClp = ANNUAL_PRICE_CLP;
+      }
+      if (data.currencyNote?.includes('$50.000') || data.currencyNote?.includes('$21.880')) {
+        patch.currencyNote = data.currencyNote
+          .replace(/\$50\.000/g, '$49.990')
+          .replace(/\$21\.880/g, '$21.890');
+      }
+      if (data.guaranteeText?.includes('$50.000') || data.guaranteeText?.includes('$21.880')) {
+        patch.guaranteeText = data.guaranteeText
+          .replace(/\$50\.000/g, '$49.990')
+          .replace(/\$21\.880/g, '$21.890');
+      }
+      if (data.welcomeMessage?.includes('$50.000')) {
+        patch.welcomeMessage = data.welcomeMessage.replace(/\$50\.000/g, '$49.990');
+      }
+      if (!data.excelPaymentUrl || isLegacyOrPlaceholderExcelUrl(data.excelPaymentUrl)) {
+        patch.excelPaymentUrl = DEFAULT_EXCEL_MERCADOPAGO_URL;
+      }
+      if (!data.excelProductName) {
+        patch.excelProductName = DEFAULT_APP_CONFIG.excelProductName;
+      }
+      if (!data.excelPriceLabel) {
+        patch.excelPriceLabel = DEFAULT_APP_CONFIG.excelPriceLabel;
+      }
+      if (typeof data.excelPriceAmount !== 'number' || data.excelPriceAmount <= 0) {
+        patch.excelPriceAmount = DEFAULT_APP_CONFIG.excelPriceAmount;
+      }
+      if (typeof data.excelActive !== 'boolean') {
+        patch.excelActive = true;
       }
       if (Object.keys(patch).length > 0) {
         await updateDoc(configRef, {
@@ -558,9 +670,10 @@ export async function ensureAdminSeedDefaults(): Promise<void> {
         supportFaq && String(supportFaq.data().answer ?? '').includes('José Ignacio Acuña');
       const hasLegacyPaymentFaq =
         paymentFaq &&
-        String(paymentFaq.data().answer ?? '').includes(
+        (String(paymentFaq.data().answer ?? '').includes(
           'El valor y modalidad vigente aparecen indicados'
-        );
+        ) ||
+          String(paymentFaq.data().answer ?? '').includes('$50.000'));
 
       if (hasLegacyMensualFaq) {
         const batch = writeBatch(db);
@@ -853,8 +966,10 @@ export async function redeemAccessCode(params: {
   }
 
   const isReferral = codeData.codeKind === 'referral';
-  if (isReferral && codeData.referrerUid && codeData.referrerUid === params.uid) {
-    throw new Error('No puedes canjear tu propio código de referido. Compártelo con otra pyme.');
+  if (isReferral) {
+    throw new Error(
+      'La promoción de códigos de referido ya no está vigente. Activa tu acceso eligiendo un plan o con un código oficial.'
+    );
   }
 
   const chosenPlan: PlanType = params.planType === 'annual' ? 'annual' : 'monthly';
@@ -916,28 +1031,47 @@ export async function redeemAccessCode(params: {
 }
 
 export async function verifyMercadoPagoPayment(params: {
-  paymentId: string;
+  paymentId?: string;
+  orderId?: string;
   uid: string;
   email: string;
   planType?: PlanType;
   billingDay?: BillingDay;
-}): Promise<{ verified: boolean; activated: boolean; planType?: PlanType; message: string }> {
+}): Promise<{
+  verified: boolean;
+  activated: boolean;
+  planType?: PlanType;
+  nextPaymentDueAt?: string;
+  message: string;
+}> {
   try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    try {
+      if (auth.currentUser) {
+        const token = await auth.currentUser.getIdToken();
+        if (token) headers.Authorization = `Bearer ${token}`;
+      }
+    } catch {
+      // Continuar sin token si falla obtención puntual
+    }
+
     const res = await fetch('/api/payments/mercadopago-verify', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify(params),
     });
     const data = (await res.json()) as {
       verified?: boolean;
       activated?: boolean;
       planType?: PlanType;
+      nextPaymentDueAt?: string;
       message?: string;
     };
     return {
       verified: Boolean(data.verified),
       activated: Boolean(data.activated),
       planType: data.planType,
+      nextPaymentDueAt: data.nextPaymentDueAt,
       message:
         data.message ||
         'Recibimos el retorno de Mercado Pago. Si tu acceso no se habilita automáticamente en segundos, adjunta tu comprobante abajo.',
@@ -950,6 +1084,69 @@ export async function verifyMercadoPagoPayment(params: {
         'No se pudo validar automáticamente en este momento. Adjunta tu comprobante abajo para activación inmediata.',
     };
   }
+}
+
+export async function createEquilibrioCheckoutSession(params: {
+  profile: UserProfile;
+  planType: PlanType;
+  appConfig: AppConfig;
+}): Promise<{
+  ok: boolean;
+  orderId?: string;
+  checkoutUrl: string;
+  mode: 'preference' | 'static_fallback';
+  message: string;
+}> {
+  const fallbackUrl =
+    params.planType === 'annual'
+      ? params.appConfig.annualPaymentUrl || params.appConfig.paymentUrl
+      : params.appConfig.paymentUrl;
+
+  try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (auth.currentUser) {
+      const token = await auth.currentUser.getIdToken();
+      if (token) headers.Authorization = `Bearer ${token}`;
+    }
+
+    const res = await fetch('/api/payments/equilibrio-checkout', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        planType: params.planType,
+        billingDay: params.profile.billingDay,
+      }),
+    });
+    if (!res.ok) {
+      throw new Error('Checkout fallback');
+    }
+    const data = (await res.json()) as {
+      ok?: boolean;
+      orderId?: string;
+      checkoutUrl?: string;
+      mode?: 'preference' | 'static_fallback';
+      message?: string;
+    };
+    if (data.ok && data.checkoutUrl) {
+      return {
+        ok: true,
+        orderId: data.orderId,
+        checkoutUrl: data.checkoutUrl,
+        mode: data.mode || 'preference',
+        message: data.message || 'Redirigiendo a Mercado Pago...',
+      };
+    }
+  } catch {
+    // Fallback al link oficial estático si el servidor o red no responden
+  }
+
+  return {
+    ok: true,
+    checkoutUrl: fallbackUrl,
+    mode: 'static_fallback',
+    message:
+      'Abriendo el enlace oficial de Mercado Pago. Asegúrate de pagar con tu mismo correo de GROWy.',
+  };
 }
 
 /**
@@ -1767,7 +1964,7 @@ export async function adminRegisterAnnualPayment(params: {
     await logAdminAction({
       adminUid: admin.uid,
       adminEmail: admin.email,
-      action: 'Registrar pago anual ($50.000 · 12 meses)',
+      action: 'Registrar pago anual ($49.990 · 12 meses)',
       target: targetUser.email,
       details: `Tx: ${txId} · Vigencia 12 meses · Vence: ${nextDue}`,
     });
@@ -2032,6 +2229,14 @@ export async function adminSaveAppConfig(admin: UserProfile, nextConfig: AppConf
       paymentUrl: clampStr(nextConfig.paymentUrl, 500),
       annualPaymentUrl: clampStr(
         nextConfig.annualPaymentUrl || DEFAULT_ANNUAL_MERCADOPAGO_URL,
+        500
+      ),
+      monthlySubscriptionUrl: clampStr(
+        nextConfig.monthlySubscriptionUrl || DEFAULT_MONTHLY_SUBSCRIPTION_URL,
+        500
+      ),
+      annualSubscriptionUrl: clampStr(
+        nextConfig.annualSubscriptionUrl || DEFAULT_ANNUAL_SUBSCRIPTION_URL,
         500
       ),
       monthlyPriceClp,
@@ -2358,13 +2563,22 @@ export async function createMercadoPagoRecurringCheckout(params: {
 }> {
   const fallbackUrl =
     params.planType === 'annual'
-      ? params.appConfig.annualPaymentUrl || params.appConfig.paymentUrl
-      : params.appConfig.paymentUrl;
+      ? params.appConfig.annualSubscriptionUrl ||
+        DEFAULT_ANNUAL_SUBSCRIPTION_URL ||
+        params.appConfig.annualPaymentUrl ||
+        params.appConfig.paymentUrl
+      : params.appConfig.monthlySubscriptionUrl ||
+        DEFAULT_MONTHLY_SUBSCRIPTION_URL ||
+        params.appConfig.paymentUrl;
 
   try {
+    const idToken = await auth.currentUser?.getIdToken().catch(() => undefined);
     const res = await fetch('/api/payments/mercadopago-subscription', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}),
+      },
       body: JSON.stringify({
         uid: params.profile.uid,
         email: params.profile.email,
@@ -2693,6 +2907,7 @@ export async function adminFetchExcelOrdersServer(): Promise<ExcelOrderRecord[] 
 export async function adminResendExcelOrder(params: {
   admin: UserProfile;
   order: ExcelOrderRecord;
+  confirmManualPayment?: boolean;
 }): Promise<{ ok: boolean; status?: string; message: string }> {
   const token = await getCurrentIdToken();
   const res = await fetch(`/api/admin/excel-orders/${encodeURIComponent(params.order.id)}/resend`, {
@@ -2701,6 +2916,9 @@ export async function adminResendExcelOrder(params: {
       Authorization: `Bearer ${token}`,
       'Content-Type': 'application/json',
     },
+    body: JSON.stringify({
+      confirmManualPayment: Boolean(params.confirmManualPayment),
+    }),
   });
   const data = (await res.json()) as {
     ok?: boolean;
@@ -2713,9 +2931,13 @@ export async function adminResendExcelOrder(params: {
       await logAdminAction({
         adminUid: params.admin.uid,
         adminEmail: params.admin.email,
-        action: 'Reenviar Equilibrio Lite Excel',
+        action: params.confirmManualPayment
+          ? 'Confirmar pago y enviar Equilibrio Lite Excel'
+          : 'Reenviar Equilibrio Lite Excel',
         target: `${params.order.licenseId} (${params.order.email})`,
-        details: `Orden ${params.order.id} reenviada por correo.`,
+        details: params.confirmManualPayment
+          ? `Pago confirmado manualmente y orden ${params.order.id} enviada por correo.`
+          : `Orden ${params.order.id} reenviada por correo.`,
       });
     } catch {
       // Silencioso si el servidor ya registró la acción
@@ -2728,8 +2950,8 @@ export async function adminResendExcelOrder(params: {
       data.message ||
       data.error ||
       (data.ok
-        ? 'Archivo personalizado reenviado correctamente.'
-        : 'No se pudo reenviar la planilla.'),
+        ? 'Archivo personalizado enviado correctamente.'
+        : 'No se pudo enviar la planilla.'),
   };
 }
 
@@ -2791,6 +3013,72 @@ export async function adminCancelExcelOrder(params: {
   });
   return { ok: true, message: 'Orden marcada como anulada y registrada en Actividad.' };
 }
+
+/* ============================================================================
+ * ANALÍTICA DE VISITAS EN VIVO E HISTÓRICA (SOLO ADMINISTRADOR)
+ * ============================================================================ */
+
+export function getSiteAnalyticsSessionId(): string {
+  try {
+    const existing = sessionStorage.getItem('growy_analytics_sid');
+    if (existing && /^[a-zA-Z0-9_-]{4,80}$/.test(existing)) {
+      return existing;
+    }
+    const generated = `vis_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    sessionStorage.setItem('growy_analytics_sid', generated);
+    return generated;
+  } catch {
+    return `vis_${Date.now().toString(36)}`;
+  }
+}
+
+export async function sendSiteAnalyticsPing(params: {
+  sessionId: string;
+  path?: string;
+  isPageView?: boolean;
+}): Promise<void> {
+  try {
+    await fetch('/api/analytics/track', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sessionId: params.sessionId,
+        path: params.path || '/',
+        isPageView: Boolean(params.isPageView),
+      }),
+      keepalive: true,
+    });
+  } catch {
+    // Silencioso en modo offline o si un bloqueador impide la métrica
+  }
+}
+
+export async function fetchAdminTrafficStats(): Promise<AdminTrafficStats> {
+  const token = await getCurrentIdToken();
+  const res = await fetch('/api/admin/stats', {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const data = (await res.json()) as Partial<AdminTrafficStats> & {
+    ok?: boolean;
+    error?: string;
+  };
+  if (!res.ok || !data.ok) {
+    throw new Error(data.error || 'No pudimos obtener las estadísticas de tráfico.');
+  }
+  return {
+    activeNow: typeof data.activeNow === 'number' ? data.activeNow : 0,
+    activeWindowSeconds:
+      typeof data.activeWindowSeconds === 'number' ? data.activeWindowSeconds : 90,
+    viewsToday: typeof data.viewsToday === 'number' ? data.viewsToday : 0,
+    views15d: typeof data.views15d === 'number' ? data.views15d : 0,
+    views30d: typeof data.views30d === 'number' ? data.views30d : 0,
+    views90d: typeof data.views90d === 'number' ? data.views90d : 0,
+    dailySeries: Array.isArray(data.dailySeries) ? data.dailySeries : [],
+    persistenceMode: data.persistenceMode === 'firestore' ? 'firestore' : 'memory',
+    generatedAt: typeof data.generatedAt === 'string' ? data.generatedAt : new Date().toISOString(),
+  };
+}
+
 
 
 

@@ -244,7 +244,7 @@ test('Detecta recordatorio (1 a 5 días) y bloqueo por vencimiento sin afectar a
   assert.equal(testStatus.shouldShowReminder, false);
 });
 
-test('Plan anual ($50.000) omite cobro mensual, avisa a 15 días y bloquea al cumplir 12 meses', () => {
+test('Plan anual ($49.990) omite cobro mensual, avisa a 15 días y bloquea al cumplir 12 meses', () => {
   const due = computeAnnualDueDate(null, new Date(2026, 3, 10));
   assert.equal(due, '2027-04-10');
 
@@ -649,7 +649,7 @@ test('Genera payload push antes del bloqueo mensual/anual y omite admin o client
   assert.ok(dueSoon.body.includes('$5.990'));
   assert.ok(dueSoon.body.includes('bloqueada'));
 
-  // Plan anual dentro de 15 días -> aviso anual $50.000
+  // Plan anual dentro de 15 días -> aviso anual $49.990
   const annualClient: UserProfile = {
     ...monthlyClient,
     planType: 'annual',
@@ -659,7 +659,7 @@ test('Genera payload push antes del bloqueo mensual/anual y omite admin o client
   assert.ok(annualSoon);
   assert.equal(annualSoon.kind, 'reminder');
   assert.equal(annualSoon.daysUntilDue, 9);
-  assert.ok(annualSoon.body.includes('$50.000'));
+  assert.ok(annualSoon.body.includes('$49.990'));
 
   // Exentos: admin y cliente de prueba sin cobro nunca reciben avisos de bloqueo
   const admin: UserProfile = { ...monthlyClient, role: 'admin', email: 'jose.growy@gmail.com' };
@@ -673,7 +673,7 @@ test('Genera payload push antes del bloqueo mensual/anual y omite admin o client
 
 test('Formatea montos CLP de lanzamiento y genera folio único de comprobante', () => {
   assert.equal(formatCLPAmount(5990), '$5.990');
-  assert.equal(formatCLPAmount(50000), '$50.000');
+  assert.equal(formatCLPAmount(49990), '$49.990');
   assert.equal(buildReceiptNumber('mp-12345678', '2026-11-14T10:00:00Z'), 'GRW-2026-12345678');
   assert.equal(buildReceiptNumber('ab', '2026-01-05'), 'GRW-2026-00AB');
 });

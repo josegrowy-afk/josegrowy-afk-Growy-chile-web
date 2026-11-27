@@ -31,10 +31,7 @@ export const GrowyLogoMark: React.FC<{
 };
 
 /**
- * Ícono renovado del producto Equilibrio (Cálido editorial):
- * fondo blanco limpio (compatible con iOS/Safari sin variables CSS en gradientes SVG),
- * arco de apoyo en azul noche con portal coral, balanza nivelada con peso lila y moneda salvia,
- * y la chispa dorada característica de Equilibrio.
+ * Logo oficial del producto Equilibrio (imagen con fondo transparente sobre contenedor blanco limpio).
  */
 export const EquilibrioProductIcon: React.FC<{
   size?: 'xs' | 'sm' | 'md' | 'lg';
@@ -42,96 +39,24 @@ export const EquilibrioProductIcon: React.FC<{
 }> = ({ size = 'md', className = '' }) => {
   const sizeClass =
     size === 'xs'
-      ? 'w-7 h-7'
+      ? 'w-7 h-7 rounded-[8px]'
       : size === 'sm'
-        ? 'w-10 h-10'
+        ? 'w-10 h-10 rounded-[11px]'
         : size === 'lg'
-          ? 'w-16 h-16'
-          : 'w-12 h-12';
+          ? 'w-16 h-16 rounded-[18px]'
+          : 'w-12 h-12 rounded-[14px]';
 
   return (
     <div
-      className={`inline-flex items-center justify-center shrink-0 select-none ${sizeClass} ${className}`}
+      className={`inline-flex items-center justify-center shrink-0 select-none overflow-hidden border border-[#1F1B2E]/12 shadow-sm bg-white ${sizeClass} ${className}`}
     >
-      <svg
-        viewBox="0 0 512 512"
-        fill="none"
-        xmlns="http://www.w3.org/2000/svg"
-        role="img"
-        aria-label="Ícono del producto Equilibrio"
-        className="w-full h-full block drop-shadow-sm"
-      >
-        {/* Contenedor squircle con fondo blanco puro */}
-        <rect x="16" y="16" width="480" height="480" rx="136" fill="#FFFFFF" />
-        <rect
-          x="20"
-          y="20"
-          width="472"
-          height="472"
-          rx="132"
-          stroke="#1F1B2E"
-          strokeOpacity="0.14"
-          strokeWidth="8"
-        />
-
-        {/* Base sólida + arco central de equilibrio */}
-        <path
-          d="M152 388H360"
-          stroke="#1F1B2E"
-          strokeWidth="28"
-          strokeLinecap="round"
-        />
-        <path
-          d="M206 388V292A50 50 0 0 1 306 292V388Z"
-          fill="#1F1B2E"
-        />
-        <path
-          d="M238 388V326A18 18 0 0 1 274 326V388Z"
-          fill="#F6A59E"
-        />
-
-        {/* Viga nivelada del punto de equilibrio */}
-        <path
-          d="M120 234H392"
-          stroke="#1F1B2E"
-          strokeWidth="26"
-          strokeLinecap="round"
-        />
-        <path
-          d="M144 234V204M368 234V204"
-          stroke="#1F1B2E"
-          strokeWidth="20"
-          strokeLinecap="round"
-        />
-
-        {/* Peso izquierdo (lila suave) y peso derecho (salvia) */}
-        <circle
-          cx="144"
-          cy="182"
-          r="34"
-          fill="#EDEAF8"
-          stroke="#1F1B2E"
-          strokeWidth="20"
-        />
-        <circle
-          cx="368"
-          cy="182"
-          r="34"
-          fill="#BFE0CC"
-          stroke="#1F1B2E"
-          strokeWidth="20"
-        />
-
-        {/* Chispa dorada característica de Equilibrio */}
-        <path
-          d="M256 76C262 110 272 120 306 126C272 132 262 142 256 176C250 142 240 132 206 126C240 120 250 110 256 76Z"
-          fill="#F3C26B"
-          stroke="#1F1B2E"
-          strokeWidth="16"
-          strokeLinejoin="round"
-        />
-        <circle cx="332" cy="108" r="12" fill="#F6A59E" stroke="#1F1B2E" strokeWidth="8" />
-      </svg>
+      <img
+        src="/assets/aistudio/image_2769a3a3.png"
+        alt="Logo oficial del producto Equilibrio"
+        className="w-full h-full object-contain block select-none"
+        draggable={false}
+        referrerPolicy="no-referrer"
+      />
     </div>
   );
 };

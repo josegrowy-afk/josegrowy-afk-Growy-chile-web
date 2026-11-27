@@ -7,6 +7,8 @@
       "properties": {
         "paymentUrl": { "type": "string", "maxLength": 500 },
         "annualPaymentUrl": { "type": "string", "maxLength": 500 },
+        "monthlySubscriptionUrl": { "type": "string", "maxLength": 500 },
+        "annualSubscriptionUrl": { "type": "string", "maxLength": 500 },
         "monthlyPriceClp": { "type": "number" },
         "annualPriceClp": { "type": "number" },
         "mpRecurringEnabled": { "type": "boolean" },
@@ -336,6 +338,76 @@
         "lastError": { "type": "string", "maxLength": 400 }
       },
       "required": ["id", "name", "email", "status", "amountCLP", "licenseId", "termsAcceptedAt", "createdAt", "deliveryAttempts"]
+    },
+    "EquilibrioOrder": {
+      "title": "EquilibrioOrder",
+      "description": "Orden de suscripción Equilibrio vinculada al UID del usuario vía Checkout Pro de Mercado Pago.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "uid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "email": { "type": "string", "minLength": 5, "maxLength": 160 },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "productCode": { "type": "string", "enum": ["equilibrio"] },
+        "planType": { "type": "string", "enum": ["monthly", "annual"] },
+        "billingDay": { "type": "number", "enum": [5, 15, 30] },
+        "amountCLP": { "type": "number" },
+        "status": {
+          "type": "string",
+          "enum": ["pendiente", "pagada", "rechazada", "reembolsada", "error"]
+        },
+        "mpPaymentId": { "type": "string", "maxLength": 100 },
+        "nextPaymentDueAt": { "type": "string", "maxLength": 10, "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" },
+        "lastError": { "type": "string", "maxLength": 400 },
+        "paidAt": { "type": "string", "maxLength": 40 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id",
+        "uid",
+        "email",
+        "displayName",
+        "productCode",
+        "planType",
+        "amountCLP",
+        "status",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "ProcessedPayment": {
+      "title": "ProcessedPayment",
+      "description": "Registro idempotente en servidor de pagos de Mercado Pago procesados para evitar duplicados y habilitar reembolsos.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "mpPaymentId": { "type": "string", "maxLength": 100 },
+        "productCode": { "type": "string", "enum": ["equilibrio", "excel_lite"] },
+        "planType": { "type": "string", "enum": ["monthly", "annual"] },
+        "uid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "email": { "type": "string", "maxLength": 160 },
+        "orderId": { "type": "string", "maxLength": 128 },
+        "amountCLP": { "type": "number" },
+        "status": { "type": "string", "maxLength": 40 },
+        "outcome": { "type": "string", "enum": ["activated", "revoked", "unmatched_email", "ignored"] },
+        "nextPaymentDueAt": { "type": "string", "maxLength": 10, "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" },
+        "reason": { "type": "string", "maxLength": 240 },
+        "processedAt": { "type": "string", "maxLength": 40 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "mpPaymentId", "productCode", "amountCLP", "status", "outcome", "processedAt", "createdAt"]
+    },
+    "SiteDailyStat": {
+      "title": "SiteDailyStat",
+      "description": "Conteo diario agregado de visualizaciones de la página (solo visible para el administrador vía servidor).",
+      "type": "object",
+      "properties": {
+        "day": { "type": "string", "maxLength": 10, "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" },
+        "views": { "type": "number" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["day", "views", "updatedAt"]
     }
   },
   "firestore": {
@@ -390,6 +462,18 @@
     "/excelOrders/{orderId}": {
       "schema": { "$ref": "#/entities/ExcelOrder" },
       "description": "Órdenes de compra única de Equilibrio Lite Excel administradas desde el servidor (Admin SDK) y revisadas por administradores verificados."
+    },
+    "/equilibrioOrders/{orderId}": {
+      "schema": { "$ref": "#/entities/EquilibrioOrder" },
+      "description": "Órdenes de pago de Equilibrio administradas por el servidor (Checkout Pro y webhooks)."
+    },
+    "/processedPayments/{paymentId}": {
+      "schema": { "$ref": "#/entities/ProcessedPayment" },
+      "description": "Registro idempotente de transacciones Mercado Pago procesadas en servidor."
+    },
+    "/siteDailyStats/{dayId}": {
+      "schema": { "$ref": "#/entities/SiteDailyStat" },
+      "description": "Conteo diario agregado de visitas de la aplicación (lectura exclusiva de administrador)."
     }
   }
 }

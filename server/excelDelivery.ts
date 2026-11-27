@@ -40,6 +40,8 @@ export class TemplateMissingError extends Error {
 const BOOTSTRAPPED_ADMIN_EMAIL = 'jose.growy@gmail.com';
 const EXCEL_DEFAULT_PRICE_CLP = 4990;
 const EXCEL_DEFAULT_PRODUCT_NAME = 'Equilibrio Lite Excel';
+const EXCEL_DEFAULT_PAYMENT_URL =
+  process.env.VITE_MERCADOPAGO_EXCEL_PAYMENT_URL?.trim() || 'https://mpago.la/2QPhp4N';
 const LICENSE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
 const NON_REPLACEMENT_NOTICE =
@@ -356,7 +358,7 @@ export async function readExcelConfigFromFirestore(db: Firestore): Promise<{
         productName: EXCEL_DEFAULT_PRODUCT_NAME,
         priceAmount: EXCEL_DEFAULT_PRICE_CLP,
         priceLabel: '$4.990 CLP',
-        fallbackPaymentUrl: '',
+        fallbackPaymentUrl: EXCEL_DEFAULT_PAYMENT_URL,
       };
     }
     const data = snap.data() as {
@@ -373,13 +375,19 @@ export async function readExcelConfigFromFirestore(db: Firestore): Promise<{
         ? Math.round(data.excelPriceAmount)
         : EXCEL_DEFAULT_PRICE_CLP;
 
+    const rawPaymentUrl = (data.excelPaymentUrl || '').trim();
+    const effectivePaymentUrl =
+      !rawPaymentUrl || rawPaymentUrl === 'https://mpago.la/2SUfb1A'
+        ? EXCEL_DEFAULT_PAYMENT_URL
+        : rawPaymentUrl;
+
     return {
       active: data.excelActive !== false,
       productName: (data.excelProductName || EXCEL_DEFAULT_PRODUCT_NAME).trim(),
       priceAmount,
       priceLabel:
         (data.excelPriceLabel || `$${priceAmount.toLocaleString('es-CL')} CLP`).trim(),
-      fallbackPaymentUrl: (data.excelPaymentUrl || '').trim(),
+      fallbackPaymentUrl: effectivePaymentUrl,
     };
   } catch {
     return {
@@ -387,7 +395,7 @@ export async function readExcelConfigFromFirestore(db: Firestore): Promise<{
       productName: EXCEL_DEFAULT_PRODUCT_NAME,
       priceAmount: EXCEL_DEFAULT_PRICE_CLP,
       priceLabel: '$4.990 CLP',
-      fallbackPaymentUrl: '',
+      fallbackPaymentUrl: EXCEL_DEFAULT_PAYMENT_URL,
     };
   }
 }

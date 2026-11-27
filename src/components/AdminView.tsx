@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  Activity,
   AlertCircle,
   Ban,
   BarChart3,
@@ -8,9 +9,9 @@ import {
   CheckCircle2,
   Copy,
   Download,
+  Eye,
   FileSpreadsheet,
   FileText,
-  Gift,
   KeyRound,
   Mail,
   MessageCircle,
@@ -25,7 +26,7 @@ import {
 } from 'lucide-react';
 import { formatISODateSpanish, getSubscriptionStatus } from '../finance/subscription';
 import { calculatePlanComparisonFromConfig } from '../finance/phase1Insights';
-import { REFERRAL_PROGRAM_RULES, escapeCsvCell } from '../finance/phase3Insights';
+import { escapeCsvCell } from '../finance/phase3Insights';
 import { computeFunnelSummary, sanitizeWhatsappUrl } from '../finance/phase4Marketing';
 import {
   BOOTSTRAPPED_ADMIN_EMAIL,
@@ -34,7 +35,6 @@ import {
   adminCreateAccessCode,
   adminDeleteFaq,
   adminDeleteUser,
-  adminGrantReferralBonus,
   adminRegisterAnnualPayment,
   adminRegisterMonthlyPayment,
   adminResendExcelOrder,
@@ -44,6 +44,7 @@ import {
   adminUpdateSupportTicket,
   adminUpdateUserAccess,
   ensureAdminSeedDefaults,
+  fetchAdminTrafficStats,
   subscribeAccessCodesAdmin,
   subscribeAllFaqsAdmin,
   subscribeAllTicketsAdmin,
@@ -56,6 +57,7 @@ import type {
   AccessCode,
   AccessStatus,
   AdminLogEntry,
+  AdminTrafficStats,
   AppConfig,
   ExcelOrderRecord,
   ExcelOrderStatus,
@@ -122,6 +124,9 @@ export const AdminView: React.FC<AdminViewProps> = ({ adminProfile, appConfig })
   const [logs, setLogs] = useState<AdminLogEntry[]>([]);
   const [funnelEvents, setFunnelEvents] = useState<FunnelEventRecord[]>([]);
   const [excelOrders, setExcelOrders] = useState<ExcelOrderRecord[]>([]);
+  const [trafficStats, setTrafficStats] = useState<AdminTrafficStats | null>(null);
+  const [trafficLoading, setTrafficLoading] = useState(true);
+  const [trafficError, setTrafficError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
   // Filtros de usuarios e ID de transacción opcional al registrar pago
@@ -135,6 +140,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ adminProfile, appConfig })
   const [resendingOrderId, setResendingOrderId] = useState<string | null>(null);
   const [cancellingOrderId, setCancellingOrderId] = useState<string | null>(null);
   const [confirmCancelOrderId, setConfirmCancelOrderId] = useState<string | null>(null);
+  const [confirmManualOrderId, setConfirmManualOrderId] = useState<string | null>(null);
   const [savingExcelConfig, setSavingExcelConfig] = useState(false);
 
   // Códigos
@@ -237,6 +243,21 @@ export const AdminView: React.FC<AdminViewProps> = ({ adminProfile, appConfig })
     }));
   };
 
+  const loadTrafficStats = async () => {
+    setTrafficLoading(true);
+    setTrafficError(null);
+    try {
+      const data = await fetchAdminTrafficStats();
+      setTrafficStats(data);
+    } catch (err) {
+      setTrafficError(
+        err instanceof Error ? err.message : 'No pudimos cargar las visitas en este momento.'
+      );
+    } finally {
+      setTrafficLoading(false);
+    }
+  };
+
   useEffect(() => {
     ensureAdminSeedDefaults();
     const unsubs = [
@@ -248,7 +269,16 @@ export const AdminView: React.FC<AdminViewProps> = ({ adminProfile, appConfig })
       subscribeFunnelEventsAdmin(setFunnelEvents),
       subscribeExcelOrdersAdmin(setExcelOrders),
     ];
-    return () => unsubs.forEach((u) => u());
+    void loadTrafficStats();
+    const pollId = window.setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        void loadTrafficStats();
+      }
+    }, 30_000);
+    return () => {
+      unsubs.forEach((u) => u());
+      window.clearInterval(pollId);
+    };
   }, []);
 
   const showNotice = (msg: string) => {
@@ -390,7 +420,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ adminProfile, appConfig })
     });
     if (cleanTx) setPaymentTxDraft('');
     showNotice(
-      `Pago anual ($50.000 · 12 meses) registrado para ${target.email}. Vence: ${formatISODateSpanish(nextDue)}. ${
+      `Pago anual ($49.990 · 12 meses) registrado para ${target.email}. Vence: ${formatISODateSpanish(nextDue)}. ${
         emailed ? 'Comprobante enviado al correo.' : 'Comprobante disponible en su historial.'
       }`
     );
@@ -399,9 +429,9 @@ export const AdminView: React.FC<AdminViewProps> = ({ adminProfile, appConfig })
   const handleCopyRenewalMessage = async (target: UserProfile) => {
     const monthlyUrl = appConfig.paymentUrl;
     const annualUrl = appConfig.annualPaymentUrl || appConfig.paymentUrl;
-    const msg = `Hola ${target.displayName}, tu acceso a Equilibrio de GROWy está listo para renovar. Elige tu plan y paga aquí:\n• Plan Mensual ($5.990 / mes): ${monthlyUrl}\n• Plan Anual ($50.000 / año · 12 meses): ${annualUrl}\nAl pagar, entra con tu cuenta Google (${target.email}) o envíanos tu comprobante para reactivar de inmediato.`;
+    const msg = `Hola ${target.displayName}, tu acceso a Equilibrio de GROWy está listo para renovar. Elige tu plan y paga aquí:\n• Plan Mensual ($5.990 / mes): ${monthlyUrl}\n• Plan Anual ($49.990 / año · 12 meses): ${annualUrl}\nAl pagar, entra con tu cuenta Google (${target.email}) o envíanos tu comprobante para reactivar de inmediato.`;
     await navigator.clipboard.writeText(msg);
-    showNotice(`Mensaje con links de pago ($5.990/mes y $50.000/año) copiado para ${target.email}.`);
+    showNotice(`Mensaje con links de pago ($5.990/mes y $49.990/año) copiado para ${target.email}.`);
   };
 
   const handleGenerateCode = async (e: React.FormEvent) => {
@@ -418,22 +448,6 @@ export const AdminView: React.FC<AdminViewProps> = ({ adminProfile, appConfig })
     await navigator.clipboard.writeText(code);
     setCopiedCode(code);
     setTimeout(() => setCopiedCode(null), 2000);
-  };
-
-  const handleGrantReferralBonus = async (codeDoc: AccessCode) => {
-    const referrerUser = users.find((u) => u.uid === codeDoc.referrerUid);
-    if (!referrerUser) {
-      showNotice('No encontramos el perfil de la pyme anfitriona para este código.');
-      return;
-    }
-    const { nextDue } = await adminGrantReferralBonus({
-      admin: adminProfile,
-      codeDoc,
-      referrerUser,
-    });
-    showNotice(
-      `+1 mes acreditado a ${referrerUser.email} por referido (${codeDoc.code}). Nueva vigencia: ${formatISODateSpanish(nextDue)}.`
-    );
   };
 
   const handleSaveFaq = async (e: React.FormEvent) => {
@@ -479,14 +493,22 @@ export const AdminView: React.FC<AdminViewProps> = ({ adminProfile, appConfig })
     }
   };
 
-  const handleResendExcelOrder = async (order: ExcelOrderRecord) => {
+  const handleResendExcelOrder = async (
+    order: ExcelOrderRecord,
+    confirmManualPayment = false
+  ) => {
     setResendingOrderId(order.id);
     try {
-      const res = await adminResendExcelOrder({ admin: adminProfile, order });
+      const res = await adminResendExcelOrder({
+        admin: adminProfile,
+        order,
+        confirmManualPayment,
+      });
+      setConfirmManualOrderId(null);
       showNotice(res.message);
     } catch (err) {
       showNotice(
-        err instanceof Error ? err.message : 'No se pudo reenviar la planilla por correo.'
+        err instanceof Error ? err.message : 'No se pudo enviar la planilla por correo.'
       );
     } finally {
       setResendingOrderId(null);
@@ -677,6 +699,183 @@ export const AdminView: React.FC<AdminViewProps> = ({ adminProfile, appConfig })
               </p>
             </button>
           </div>
+
+          {/* ESTADÍSTICAS EN VIVO Y VISUALIZACIONES HISTÓRICAS (SOLO ADMIN) */}
+          <SolidCard as="section" className="p-6 space-y-5">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <Activity className="w-5 h-5 text-[var(--pos-text)] shrink-0" />
+                <SectionTitle
+                  as="h2"
+                  size="sm"
+                  title="Visitas en *tiempo real* y audiencia"
+                  subtitle="Visible solo para tu cuenta de administrador · actualización cada 30 s sin cookies."
+                />
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                {trafficStats && (
+                  <span className="text-[11px] font-semibold text-[var(--text-secondary)]">
+                    {trafficStats.persistenceMode === 'firestore'
+                      ? 'Historial guardado en Firestore'
+                      : 'Registro activo en memoria del servidor'}
+                  </span>
+                )}
+                <button
+                  type="button"
+                  disabled={trafficLoading}
+                  onClick={() => void loadTrafficStats()}
+                  className="min-h-[36px] px-3.5 rounded-full border border-[var(--border-hairline)] bg-[var(--bg-soft-alt)] hover:bg-[var(--bg-soft)] text-xs font-bold text-[var(--text-primary)] inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-60 transition-colors"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${trafficLoading ? 'animate-spin' : ''}`} />
+                  <span>{trafficLoading ? 'Actualizando...' : 'Actualizar'}</span>
+                </button>
+              </div>
+            </div>
+
+            {trafficError && !trafficStats ? (
+              <p className="text-xs font-semibold p-3.5 rounded-[18px] bg-[var(--danger-soft)] text-[var(--danger-text)] border border-[var(--danger-border)]">
+                {trafficError}
+              </p>
+            ) : !trafficStats ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+                {[0, 1, 2, 3].map((idx) => (
+                  <div
+                    key={idx}
+                    className="h-24 rounded-[20px] bg-[var(--bg-soft-alt)] border border-[var(--border-hairline)] animate-pulse"
+                  />
+                ))}
+              </div>
+            ) : (
+              <>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+                  <div className="rounded-[22px] p-4 bg-[var(--pos-soft)] border border-[var(--pos-border)]">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-xs font-semibold text-[var(--pos-muted)]">
+                        En la página ahora
+                      </p>
+                      <span
+                        className="w-2.5 h-2.5 rounded-full bg-[var(--pos-text)]"
+                        aria-hidden="true"
+                      />
+                    </div>
+                    <p className="font-mono tabular-nums text-3xl font-bold text-[var(--pos-text)] mt-1">
+                      {trafficStats.activeNow.toLocaleString('es-CL')}
+                    </p>
+                    <p className="text-[11px] text-[var(--pos-muted)] mt-1">
+                      activas últimos {trafficStats.activeWindowSeconds} s
+                    </p>
+                  </div>
+
+                  <div className="rounded-[22px] p-4 bg-[var(--bg-soft-alt)] border border-[var(--border-hairline)]">
+                    <p className="text-xs font-semibold text-[var(--text-secondary)]">
+                      Últimos 15 días
+                    </p>
+                    <p className="font-mono tabular-nums text-3xl font-bold text-[var(--text-primary)] mt-1">
+                      {trafficStats.views15d.toLocaleString('es-CL')}
+                    </p>
+                    <p className="text-[11px] text-[var(--text-secondary)] mt-1">
+                      visualizaciones de página
+                    </p>
+                  </div>
+
+                  <div className="rounded-[22px] p-4 bg-[var(--bg-soft-alt)] border border-[var(--border-hairline)]">
+                    <p className="text-xs font-semibold text-[var(--text-secondary)]">
+                      Últimos 30 días
+                    </p>
+                    <p className="font-mono tabular-nums text-3xl font-bold text-[var(--text-primary)] mt-1">
+                      {trafficStats.views30d.toLocaleString('es-CL')}
+                    </p>
+                    <p className="text-[11px] text-[var(--text-secondary)] mt-1">
+                      visualizaciones de página
+                    </p>
+                  </div>
+
+                  <div className="rounded-[22px] p-4 bg-[var(--bg-soft-alt)] border border-[var(--border-hairline)]">
+                    <p className="text-xs font-semibold text-[var(--text-secondary)]">
+                      Últimos 3 meses (90 días)
+                    </p>
+                    <p className="font-mono tabular-nums text-3xl font-bold text-[var(--text-primary)] mt-1">
+                      {trafficStats.views90d.toLocaleString('es-CL')}
+                    </p>
+                    <p className="text-[11px] text-[var(--text-secondary)] mt-1">
+                      visualizaciones de página
+                    </p>
+                  </div>
+                </div>
+
+                {trafficStats.dailySeries.length > 0 && (
+                  <div className="p-4 rounded-[20px] bg-[var(--bg-soft-alt)] border border-[var(--border-hairline)] space-y-2.5">
+                    <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                      <span className="font-semibold text-[var(--text-primary)] inline-flex items-center gap-1.5">
+                        <Eye className="w-3.5 h-3.5 text-[var(--sec-text)]" />
+                        <span>Visualizaciones por día (últimos 30 días)</span>
+                      </span>
+                      <span className="font-mono tabular-nums text-[var(--text-secondary)]">
+                        Hoy:{' '}
+                        <strong className="text-[var(--text-primary)]">
+                          {trafficStats.viewsToday.toLocaleString('es-CL')}
+                        </strong>{' '}
+                        vistas
+                      </span>
+                    </div>
+
+                    {(() => {
+                      const maxViews = Math.max(
+                        1,
+                        ...trafficStats.dailySeries.map((item) => item.views)
+                      );
+                      return (
+                        <div className="space-y-1.5">
+                          <div
+                            className="h-24 flex items-end gap-1 pt-2"
+                            role="img"
+                            aria-label="Gráfico de visualizaciones diarias de los últimos 30 días"
+                          >
+                            {trafficStats.dailySeries.map((entry, idx) => {
+                              const heightPct =
+                                entry.views > 0
+                                  ? Math.max(12, Math.round((entry.views / maxViews) * 100))
+                                  : 4;
+                              const isToday = idx === trafficStats.dailySeries.length - 1;
+                              return (
+                                <div
+                                  key={entry.day}
+                                  title={`${entry.day}: ${entry.views} visualizaciones`}
+                                  className="flex-1 h-full flex items-end"
+                                >
+                                  <div
+                                    className={`w-full rounded-t-sm transition-all ${
+                                      isToday
+                                        ? 'bg-[var(--pos-text)]'
+                                        : entry.views > 0
+                                          ? 'bg-[var(--accent-strong)]/80 hover:bg-[var(--accent-strong)]'
+                                          : 'bg-[var(--border-hairline)]'
+                                    }`}
+                                    style={{ height: `${heightPct}%` }}
+                                  />
+                                </div>
+                              );
+                            })}
+                          </div>
+                          <div className="flex items-center justify-between text-[10px] font-mono tabular-nums text-[var(--text-secondary)]">
+                            <span>{trafficStats.dailySeries[0]?.day}</span>
+                            <span>
+                              {
+                                trafficStats.dailySeries[
+                                  Math.floor(trafficStats.dailySeries.length / 2)
+                                ]?.day
+                              }
+                            </span>
+                            <span>Hoy ({trafficStats.dailySeries[trafficStats.dailySeries.length - 1]?.day})</span>
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                )}
+              </>
+            )}
+          </SolidCard>
 
           <SolidCard as="section" className="p-6 space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
@@ -890,7 +1089,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ adminProfile, appConfig })
                         ) : sub.isAnnual ? (
                           <div className="space-y-0.5">
                             <p className="font-semibold text-[var(--sec-text)]">
-                              Plan Anual (12M · $50.000)
+                              Plan Anual (12M · $49.990)
                             </p>
                             <p
                               className={`text-[11px] font-mono ${
@@ -930,7 +1129,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ adminProfile, appConfig })
                               <button
                                 type="button"
                                 onClick={() => handleCopyRenewalMessage(u)}
-                                title="Copiar mensaje y links de cobro ($5.990/mes o $50.000/año)"
+                                title="Copiar mensaje y links de cobro ($5.990/mes o $49.990/año)"
                                 className={`min-h-[36px] px-3.5 rounded-full border text-xs font-bold inline-flex items-center gap-1 cursor-pointer ${
                                   sub.isExpired
                                     ? 'bg-[var(--danger-soft)] text-[var(--danger-text)] border-[var(--danger-border)]'
@@ -954,7 +1153,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ adminProfile, appConfig })
                                 className="min-h-[36px] px-3.5 rounded-full bg-[var(--sec-soft)] text-[var(--sec-text)] border border-[var(--sec-border)] text-xs font-bold inline-flex items-center gap-1 cursor-pointer"
                               >
                                 <CalendarCheck className="w-3.5 h-3.5" />
-                                <span>Año $50.000</span>
+                                <span>Año $49.990</span>
                               </button>
                             </>
                           )}
@@ -1012,59 +1211,27 @@ export const AdminView: React.FC<AdminViewProps> = ({ adminProfile, appConfig })
           </SolidCard>
 
           <SolidCard as="section" className="lg:col-span-8 p-6 space-y-5">
-            <div className="p-4 rounded-[20px] bg-[var(--sec-soft)] border border-[var(--sec-border)] space-y-2">
-              <div className="flex items-center gap-2 text-xs font-bold text-[var(--sec-text)]">
-                <Gift className="w-4 h-4 shrink-0" />
-                <span>Reglas del programa de referidos («Invita a otra pyme y ambos ganan un mes»)</span>
-              </div>
-              <ul className="text-[11px] text-[var(--text-secondary)] space-y-1 list-disc pl-5">
-                {REFERRAL_PROGRAM_RULES.map((rule, idx) => (
-                  <li key={idx}>{rule}</li>
-                ))}
-              </ul>
-            </div>
-
             <div className="space-y-3">
               <SectionTitle
                 as="h2"
                 size="sm"
-                title={`Listado de *códigos* y referidos (${codes.length})`}
+                title={`Listado de *códigos* de acceso (${codes.length})`}
               />
               <div className="divide-y divide-[var(--border-hairline)]">
                 {codes.map((c) => {
-                  const isReferral = c.codeKind === 'referral';
-                  const canCreditReferrer =
-                    isReferral && c.status === 'used' && !c.referrerRewardApplied && Boolean(c.referrerUid);
                   return (
                     <div key={c.code} className="py-3 flex flex-wrap items-center justify-between gap-3">
                       <div>
                         <p className="font-mono font-semibold text-sm flex flex-wrap items-center gap-2">
                           <span>{c.code}</span>
-                          {isReferral && (
-                            <span className="px-2.5 py-0.5 rounded-full bg-[var(--accent-soft)] text-[var(--accent-strong)] text-[10px] font-sans font-bold">
-                              Referido (+1 mes)
-                            </span>
-                          )}
                         </p>
                         <p className="text-xs text-[var(--text-secondary)]">
                           <span>Estado: {c.status}</span>
                           {c.note ? ` · ${c.note}` : ''}
-                          {c.referrerEmail ? ` · Invita: ${c.referrerEmail}` : ''}
                           {c.usedByEmail ? ` · Usado por ${c.usedByEmail}` : ''}
-                          {c.referrerRewardApplied ? ' · Premio anfitrión acreditado' : ''}
                         </p>
                       </div>
                       <div className="flex flex-wrap items-center gap-2">
-                        {canCreditReferrer && (
-                          <button
-                            type="button"
-                            onClick={() => void handleGrantReferralBonus(c)}
-                            className="min-h-[38px] px-4 rounded-full bg-[var(--pos-soft)] text-[var(--pos-text)] border border-[var(--pos-border)] text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer"
-                          >
-                            <Gift className="w-3.5 h-3.5" />
-                            <span>Acreditar +1 mes al anfitrión</span>
-                          </button>
-                        )}
                         <button
                           type="button"
                           onClick={() => handleCopyCode(c.code)}
@@ -1244,7 +1411,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ adminProfile, appConfig })
             <SectionTitle
               as="h2"
               size="sm"
-              title="Planes ($5.990/mes y $50.000/año), *links* de pago y contacto"
+              title="Planes ($5.990/mes y $49.990/año), *links* de pago y contacto"
             />
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -1254,7 +1421,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ adminProfile, appConfig })
                 </label>
                 <input
                   type="text"
-                  placeholder="https://mpago.la/..."
+                  placeholder="https://mpago.la/1muS2bx"
                   value={draftConfig.paymentUrl}
                   onChange={(e) => setDraftConfig({ ...draftConfig, paymentUrl: e.target.value })}
                   className="boho-input w-full"
@@ -1265,12 +1432,12 @@ export const AdminView: React.FC<AdminViewProps> = ({ adminProfile, appConfig })
               </div>
               <div>
                 <label className="block text-xs font-semibold mb-1">
-                  Link de pago Anual ($50.000 / año · 12 meses) · Mercado Pago
+                  Link de pago Anual ($49.990 / año · 12 meses) · Mercado Pago
                 </label>
                 <input
                   type="text"
-                  placeholder="https://mpago.la/2JwG16F"
-                  value={draftConfig.annualPaymentUrl ?? 'https://mpago.la/2JwG16F'}
+                  placeholder="https://mpago.la/1htV6zn"
+                  value={draftConfig.annualPaymentUrl ?? 'https://mpago.la/1htV6zn'}
                   onChange={(e) =>
                     setDraftConfig({ ...draftConfig, annualPaymentUrl: e.target.value })
                   }
@@ -1278,6 +1445,43 @@ export const AdminView: React.FC<AdminViewProps> = ({ adminProfile, appConfig })
                 />
                 <span className="block text-[11px] text-[var(--text-secondary)] mt-1">
                   Se usa en el plan anual de 12 meses y al vencer para renovar.
+                </span>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-semibold mb-1">
+                  Link de Suscripción Automática Mensual · Mercado Pago
+                </label>
+                <input
+                  type="text"
+                  placeholder="https://mpago.la/2feqLfB"
+                  value={draftConfig.monthlySubscriptionUrl ?? 'https://mpago.la/2feqLfB'}
+                  onChange={(e) =>
+                    setDraftConfig({ ...draftConfig, monthlySubscriptionUrl: e.target.value })
+                  }
+                  className="boho-input w-full"
+                />
+                <span className="block text-[11px] text-[var(--text-secondary)] mt-1">
+                  Link del plan recurrente mensual en Mercado Pago (débito automático).
+                </span>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold mb-1">
+                  Link de Suscripción Automática Anual · Mercado Pago
+                </label>
+                <input
+                  type="text"
+                  placeholder="https://mpago.la/2CSA14N"
+                  value={draftConfig.annualSubscriptionUrl ?? 'https://mpago.la/2CSA14N'}
+                  onChange={(e) =>
+                    setDraftConfig({ ...draftConfig, annualSubscriptionUrl: e.target.value })
+                  }
+                  className="boho-input w-full"
+                />
+                <span className="block text-[11px] text-[var(--text-secondary)] mt-1">
+                  Link del plan recurrente anual en Mercado Pago (débito automático cada 12 meses).
                 </span>
               </div>
             </div>
@@ -1356,7 +1560,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ adminProfile, appConfig })
                   type="number"
                   min={1}
                   step="1"
-                  value={draftConfig.annualPriceClp ?? 50000}
+                  value={draftConfig.annualPriceClp ?? 49990}
                   onChange={(e) =>
                     setDraftConfig({
                       ...draftConfig,
@@ -2450,26 +2654,59 @@ export const AdminView: React.FC<AdminViewProps> = ({ adminProfile, appConfig })
 
                           <td className="py-3.5 pl-3 text-right">
                             <div className="flex flex-wrap justify-end gap-2">
-                              <button
-                                type="button"
-                                disabled={!canResend || resendingOrderId === order.id}
-                                title={
-                                  canResend
-                                    ? 'Generar/reenviar planilla personalizada al correo del comprador'
-                                    : 'Solo disponible para órdenes pagadas, entregadas o con error de envío'
-                                }
-                                onClick={() => handleResendExcelOrder(order)}
-                                className="min-h-[38px] px-3.5 rounded-full bg-[var(--sec-soft)] text-[var(--sec-text)] border border-[var(--sec-border)] disabled:opacity-45 text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer"
-                              >
-                                <RefreshCw
-                                  className={`w-3.5 h-3.5 ${
-                                    resendingOrderId === order.id ? 'animate-spin' : ''
-                                  }`}
-                                />
-                                <span>
-                                  {resendingOrderId === order.id ? 'Enviando...' : 'Reenviar'}
-                                </span>
-                              </button>
+                              {canResend && (
+                                <button
+                                  type="button"
+                                  disabled={resendingOrderId === order.id}
+                                  title="Generar/reenviar planilla personalizada al correo del comprador"
+                                  onClick={() => handleResendExcelOrder(order, false)}
+                                  className="min-h-[38px] px-3.5 rounded-full bg-[var(--sec-soft)] text-[var(--sec-text)] border border-[var(--sec-border)] disabled:opacity-45 text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer"
+                                >
+                                  <RefreshCw
+                                    className={`w-3.5 h-3.5 ${
+                                      resendingOrderId === order.id ? 'animate-spin' : ''
+                                    }`}
+                                  />
+                                  <span>
+                                    {resendingOrderId === order.id ? 'Enviando...' : 'Reenviar'}
+                                  </span>
+                                </button>
+                              )}
+
+                              {order.status === 'pendiente' && confirmManualOrderId !== order.id && (
+                                <button
+                                  type="button"
+                                  disabled={resendingOrderId === order.id}
+                                  title="Úsalo si el comprador pagó por el link directo y quieres enviarle su Excel ahora"
+                                  onClick={() => setConfirmManualOrderId(order.id)}
+                                  className="min-h-[38px] px-3.5 rounded-full bg-[var(--pos-soft)] text-[var(--pos-text)] border border-[var(--pos-border)] disabled:opacity-45 text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer"
+                                >
+                                  <Check className="w-3.5 h-3.5" />
+                                  <span>Confirmar pago y enviar</span>
+                                </button>
+                              )}
+
+                              {order.status === 'pendiente' && confirmManualOrderId === order.id && (
+                                <div className="flex items-center gap-1.5">
+                                  <button
+                                    type="button"
+                                    disabled={resendingOrderId === order.id}
+                                    onClick={() => handleResendExcelOrder(order, true)}
+                                    className="min-h-[38px] px-3 rounded-full bg-[var(--pos-text)] text-white text-xs font-bold cursor-pointer disabled:opacity-60"
+                                  >
+                                    {resendingOrderId === order.id
+                                      ? 'Enviando...'
+                                      : 'Confirmar y enviar'}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setConfirmManualOrderId(null)}
+                                    className="min-h-[38px] px-3 rounded-full border border-[var(--border-hairline)] text-xs font-semibold cursor-pointer"
+                                  >
+                                    Cancelar
+                                  </button>
+                                </div>
+                              )}
 
                               {canCancel && confirmCancelOrderId !== order.id && (
                                 <button
@@ -2597,8 +2834,8 @@ export const AdminView: React.FC<AdminViewProps> = ({ adminProfile, appConfig })
                   </label>
                   <input
                     type="url"
-                    placeholder="Opcional si usas Preferencias en servidor"
-                    value={draftConfig.excelPaymentUrl ?? ''}
+                    placeholder="https://mpago.la/2QPhp4N"
+                    value={draftConfig.excelPaymentUrl ?? 'https://mpago.la/2QPhp4N'}
                     onChange={(e) =>
                       setDraftConfig({ ...draftConfig, excelPaymentUrl: e.target.value })
                     }

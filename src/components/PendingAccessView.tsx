@@ -17,6 +17,7 @@ import {
   formatISODateSpanish,
 } from '../finance/subscription';
 import {
+  createEquilibrioCheckoutSession,
   createMercadoPagoRecurringCheckout,
   redeemAccessCode,
   setUserBillingDay,
@@ -44,9 +45,18 @@ export const PendingAccessView: React.FC<PendingAccessViewProps> = ({
   mpVerificationNotice = null,
   onSignOut,
 }) => {
-  const [planChoice, setPlanChoice] = useState<PlanType>(
-    profile.planType === 'annual' ? 'annual' : 'monthly'
-  );
+  const [planChoice, setPlanChoice] = useState<PlanType>(() => {
+    try {
+      const pending = sessionStorage.getItem('growy_pending_checkout_plan');
+      if (pending === 'annual' || pending === 'monthly') {
+        sessionStorage.removeItem('growy_pending_checkout_plan');
+        return pending;
+      }
+    } catch {
+      // Ignorar si sessionStorage no está disponible
+    }
+    return profile.planType === 'annual' ? 'annual' : 'monthly';
+  });
   const [selectedDay, setSelectedDay] = useState<BillingDay | null>(profile.billingDay ?? null);
   const [savingDay, setSavingDay] = useState(false);
   const [dayFeedback, setDayFeedback] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
@@ -58,14 +68,36 @@ export const PendingAccessView: React.FC<PendingAccessViewProps> = ({
     null
   );
   const [mpAutoBusy, setMpAutoBusy] = useState(false);
+  const [checkoutBusy, setCheckoutBusy] = useState<PlanType | null>(null);
   const [mpAutoNotice, setMpAutoNotice] = useState<string | null>(null);
 
   const isRevoked = profile.accessStatus === 'revoked';
   const wasAnnualPlan = profile.planType === 'annual';
   const hasSavedBillingDay =
     profile.billingDay === 5 || profile.billingDay === 15 || profile.billingDay === 30;
-  const annualCheckoutUrl = config.annualPaymentUrl || config.paymentUrl;
   const planSummary = useMemo(() => calculatePlanComparisonFromConfig(config), [config]);
+
+  const handleCheckoutPlan = async (targetPlan: PlanType) => {
+    void trackFunnelStepOncePerSession('payment', {
+      source: 'payment_view',
+      planType: targetPlan,
+    });
+    setCheckoutBusy(targetPlan);
+    setMpAutoNotice(null);
+    try {
+      const res = await createEquilibrioCheckoutSession({
+        profile,
+        planType: targetPlan,
+        appConfig: config,
+      });
+      setMpAutoNotice(res.message);
+      if (res.checkoutUrl && typeof window !== 'undefined') {
+        window.location.assign(res.checkoutUrl);
+      }
+    } finally {
+      setCheckoutBusy(null);
+    }
+  };
 
   const handleRecurringCheckout = async (targetPlan: PlanType) => {
     void trackFunnelStepOncePerSession('payment', {
@@ -398,22 +430,20 @@ export const PendingAccessView: React.FC<PendingAccessViewProps> = ({
                       <span>{mpAutoBusy ? 'Abriendo...' : 'Suscripción automática MP'}</span>
                     </button>
                   )}
-                  <a
-                    href={annualCheckoutUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    onClick={() =>
-                      void trackFunnelStepOncePerSession('payment', {
-                        source: 'payment_view',
-                        planType: 'annual',
-                      })
-                    }
+                  <button
+                    type="button"
+                    disabled={checkoutBusy !== null || mpAutoBusy}
+                    onClick={() => void handleCheckoutPlan('annual')}
                     style={{ backgroundColor: 'var(--btn-navy-bg)', color: 'var(--btn-navy-text)' }}
-                    className="flex-1 min-h-[48px] px-5 inline-flex items-center justify-center gap-2 rounded-full text-sm font-bold transition-opacity hover:opacity-92 shadow-xs"
+                    className="flex-1 min-h-[48px] px-5 inline-flex items-center justify-center gap-2 rounded-full text-sm font-bold transition-opacity hover:opacity-92 shadow-xs cursor-pointer disabled:opacity-60"
                   >
-                    <span>Link directo Anual ({planSummary.annualPriceFormatted})</span>
+                    <span>
+                      {checkoutBusy === 'annual'
+                        ? 'Abriendo pago...'
+                        : `Pagar Plan Anual (${planSummary.annualPriceFormatted})`}
+                    </span>
                     <ArrowRight className="w-4 h-4" />
-                  </a>
+                  </button>
                 </div>
                 {mpAutoNotice && (
                   <p className="text-xs font-semibold text-[var(--sec-text)]">{mpAutoNotice}</p>
@@ -563,25 +593,23 @@ export const PendingAccessView: React.FC<PendingAccessViewProps> = ({
                         </span>
                       </button>
                     )}
-                    <a
-                      href={config.paymentUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      onClick={() =>
-                        void trackFunnelStepOncePerSession('payment', {
-                          source: 'payment_view',
-                          planType: 'monthly',
-                        })
-                      }
+                    <button
+                      type="button"
+                      disabled={checkoutBusy !== null || mpAutoBusy}
+                      onClick={() => void handleCheckoutPlan('monthly')}
                       style={{
                         backgroundColor: 'var(--btn-navy-bg)',
                         color: 'var(--btn-navy-text)',
                       }}
-                      className="flex-1 min-h-[48px] px-5 inline-flex items-center justify-center gap-2 rounded-full text-sm font-bold transition-opacity hover:opacity-92 shadow-xs"
+                      className="flex-1 min-h-[48px] px-5 inline-flex items-center justify-center gap-2 rounded-full text-sm font-bold transition-opacity hover:opacity-92 shadow-xs cursor-pointer disabled:opacity-60"
                     >
-                      <span>Link manual {planSummary.monthlyPriceFormatted}/mes</span>
+                      <span>
+                        {checkoutBusy === 'monthly'
+                          ? 'Abriendo pago...'
+                          : `Pagar Plan Mensual (${planSummary.monthlyPriceFormatted}/mes)`}
+                      </span>
                       <ArrowRight className="w-4 h-4" />
-                    </a>
+                    </button>
                   </div>
                   {mpAutoNotice && (
                     <p className="text-xs font-semibold text-[var(--sec-text)]">{mpAutoNotice}</p>
@@ -590,18 +618,16 @@ export const PendingAccessView: React.FC<PendingAccessViewProps> = ({
               </>
             )}
 
-            {/* CÓDIGO DE ACCESO O RENOVACIÓN O REFERIDO */}
+            {/* CÓDIGO DE ACCESO O RENOVACIÓN */}
             <form onSubmit={handleRedeem} className="space-y-3 pt-1">
               <div>
                 <label className="block text-sm font-semibold text-[var(--text-primary)]">
                   {isExpired
-                    ? '¿Tienes un código de renovación o referido?'
-                    : '¿Tienes un código de activación o invitación de otra pyme?'}
+                    ? '¿Tienes un código de renovación?'
+                    : '¿Tienes un código de activación?'}
                 </label>
                 <p className="text-[11px] text-[var(--text-secondary)] mt-0.5">
-                  Si otra pyme te compartió un código <span className="font-mono">REF-...</span>, al
-                  canjearlo obtienes <strong>1 mes gratis (+30 días)</strong> y ella también suma 1
-                  mes.
+                  Si recibiste un código oficial de activación, ingrésalo aquí para habilitar tu cuenta.
                 </p>
               </div>
 
@@ -620,7 +646,7 @@ export const PendingAccessView: React.FC<PendingAccessViewProps> = ({
               <div className="flex flex-col sm:flex-row gap-2.5">
                 <input
                   type="text"
-                  placeholder="Ej. GROWY-AB12-CD34 o REF-..."
+                  placeholder="Ej. GROWY-AB12-CD34"
                   value={code}
                   onChange={(e) => setCode(e.target.value.toUpperCase())}
                   className="boho-input flex-1 font-mono uppercase !rounded-full"

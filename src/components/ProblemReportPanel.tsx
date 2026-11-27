@@ -124,7 +124,7 @@ export const ProblemReportPanel: React.FC<ProblemReportPanelProps> = ({
             ¿Necesitas ayuda o quieres comentarnos algo?
           </h3>
           <p className="text-xs text-[var(--text-secondary)] mt-0.5 leading-relaxed">
-            Si ya contrataste tu plan ($5.990 mensual o $50.000 anual) y tienes alguna consulta,
+            Si ya contrataste tu plan ($5.990 mensual o $49.990 anual) y tienes alguna consulta,
             sugerencia o necesitas asistencia, escríbenos. Puedes adjuntar documentos o capturas
             directamente para el administrador ({contactEmail}).
           </p>
