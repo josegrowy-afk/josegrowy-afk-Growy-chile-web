@@ -35,12 +35,14 @@ import {
   adminCreateAccessCode,
   adminDeleteFaq,
   adminDeleteUser,
+  adminDownloadTestExcelPreview,
   adminRegisterAnnualPayment,
   adminRegisterMonthlyPayment,
   adminResendExcelOrder,
   adminRevokeAccessCode,
   adminSaveAppConfig,
   adminSaveFaq,
+  adminSendTestExcelEmail,
   adminUpdateSupportTicket,
   adminUpdateUserAccess,
   ensureAdminSeedDefaults,
@@ -142,6 +144,18 @@ export const AdminView: React.FC<AdminViewProps> = ({ adminProfile, appConfig })
   const [confirmCancelOrderId, setConfirmCancelOrderId] = useState<string | null>(null);
   const [confirmManualOrderId, setConfirmManualOrderId] = useState<string | null>(null);
   const [savingExcelConfig, setSavingExcelConfig] = useState(false);
+  const [testExcelName, setTestExcelName] = useState(
+    () => adminProfile.displayName?.trim() || 'Prueba Admin GROWy'
+  );
+  const [testExcelEmail, setTestExcelEmail] = useState(
+    () => adminProfile.email?.trim() || BOOTSTRAPPED_ADMIN_EMAIL
+  );
+  const [sendingTestExcel, setSendingTestExcel] = useState(false);
+  const [downloadingTestExcel, setDownloadingTestExcel] = useState(false);
+  const [testExcelFeedback, setTestExcelFeedback] = useState<{
+    ok: boolean;
+    text: string;
+  } | null>(null);
 
   // Códigos
   const [codeNote, setCodeNote] = useState('');
@@ -531,6 +545,54 @@ export const AdminView: React.FC<AdminViewProps> = ({ adminProfile, appConfig })
       );
     } finally {
       setCancellingOrderId(null);
+    }
+  };
+
+  const handleSendTestExcelEmail = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSendingTestExcel(true);
+    setTestExcelFeedback(null);
+    try {
+      const res = await adminSendTestExcelEmail({
+        admin: adminProfile,
+        recipientName: testExcelName,
+        recipientEmail: testExcelEmail,
+      });
+      setTestExcelFeedback({ ok: res.ok, text: res.message });
+      showNotice(res.message);
+    } catch (err) {
+      const msg =
+        err instanceof Error ? err.message : 'No pudimos enviar el correo de prueba.';
+      setTestExcelFeedback({ ok: false, text: msg });
+      showNotice(msg);
+    } finally {
+      setSendingTestExcel(false);
+    }
+  };
+
+  const handleDownloadTestExcel = async () => {
+    setDownloadingTestExcel(true);
+    setTestExcelFeedback(null);
+    try {
+      const res = await adminDownloadTestExcelPreview({
+        recipientName: testExcelName,
+      });
+      if (res.ok) {
+        const msg = `Archivo ${res.filename} descargado correctamente con licencia GROWY-PRUEBA01.`;
+        setTestExcelFeedback({ ok: true, text: msg });
+        showNotice(msg);
+      } else {
+        const msg = res.message || 'No pudimos generar la planilla de prueba.';
+        setTestExcelFeedback({ ok: false, text: msg });
+        showNotice(msg);
+      }
+    } catch (err) {
+      const msg =
+        err instanceof Error ? err.message : 'No pudimos generar la planilla de prueba.';
+      setTestExcelFeedback({ ok: false, text: msg });
+      showNotice(msg);
+    } finally {
+      setDownloadingTestExcel(false);
     }
   };
 
@@ -2512,6 +2574,90 @@ export const AdminView: React.FC<AdminViewProps> = ({ adminProfile, appConfig })
               </p>
             </div>
           </div>
+
+          <SolidCard className="p-6 space-y-4">
+            <div className="flex items-start gap-2.5">
+              <Mail className="w-5 h-5 text-[var(--accent-strong)] mt-0.5 shrink-0" />
+              <SectionTitle
+                as="h2"
+                size="sm"
+                title="Prueba rápida de envío y archivo · *Equilibrio Lite Excel*"
+                subtitle="Envía una copia real por correo con licencia de prueba (GROWY-PRUEBA01) sin pasar por Mercado Pago ni crear órdenes en la tabla, o descarga el .xlsx personalizado directo."
+              />
+            </div>
+
+            <form
+              onSubmit={handleSendTestExcelEmail}
+              className="grid grid-cols-1 md:grid-cols-12 gap-3 items-end"
+            >
+              <div className="md:col-span-4">
+                <label className="block text-xs font-semibold mb-1 text-[var(--text-primary)]">
+                  Nombre en la licencia de prueba
+                </label>
+                <input
+                  type="text"
+                  required
+                  minLength={2}
+                  maxLength={100}
+                  value={testExcelName}
+                  onChange={(e) => setTestExcelName(e.target.value)}
+                  placeholder="Tu nombre o negocio"
+                  className="boho-input w-full"
+                />
+              </div>
+              <div className="md:col-span-4">
+                <label className="block text-xs font-semibold mb-1 text-[var(--text-primary)]">
+                  Correo destino
+                </label>
+                <input
+                  type="email"
+                  required
+                  maxLength={160}
+                  value={testExcelEmail}
+                  onChange={(e) => setTestExcelEmail(e.target.value)}
+                  placeholder="tucorreo@ejemplo.com"
+                  className="boho-input w-full"
+                />
+              </div>
+              <div className="md:col-span-4 flex flex-wrap gap-2">
+                <button
+                  type="submit"
+                  disabled={sendingTestExcel || downloadingTestExcel}
+                  style={{ backgroundColor: 'var(--btn-navy-bg)', color: 'var(--btn-navy-text)' }}
+                  className="min-h-[44px] px-4 rounded-full text-xs font-bold inline-flex items-center justify-center gap-2 cursor-pointer disabled:opacity-55 flex-1 whitespace-nowrap"
+                >
+                  <Mail className="w-4 h-4 shrink-0" />
+                  <span>{sendingTestExcel ? 'Enviando prueba...' : 'Enviar Excel al correo'}</span>
+                </button>
+                <button
+                  type="button"
+                  disabled={sendingTestExcel || downloadingTestExcel}
+                  onClick={handleDownloadTestExcel}
+                  className="min-h-[44px] px-4 rounded-full border border-[var(--border-hairline)] bg-[var(--bg-soft-alt)] hover:bg-[var(--bg-soft)] text-xs font-bold text-[var(--text-primary)] inline-flex items-center justify-center gap-2 cursor-pointer disabled:opacity-55 whitespace-nowrap"
+                >
+                  <Download className="w-4 h-4 shrink-0" />
+                  <span>{downloadingTestExcel ? 'Generando...' : 'Descargar .xlsx'}</span>
+                </button>
+              </div>
+            </form>
+
+            {testExcelFeedback && (
+              <div
+                className={`rounded-2xl px-4 py-3 text-xs font-medium border flex items-start gap-2 ${
+                  testExcelFeedback.ok
+                    ? 'bg-[var(--pos-soft)] text-[var(--pos-text)] border-[var(--pos-border)]'
+                    : 'bg-[var(--danger-soft)] text-[var(--danger-text)] border-[var(--danger-border)]'
+                }`}
+              >
+                {testExcelFeedback.ok ? (
+                  <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" />
+                ) : (
+                  <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                )}
+                <span>{testExcelFeedback.text}</span>
+              </div>
+            )}
+          </SolidCard>
 
           <SolidCard className="p-6 space-y-4">
             <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">

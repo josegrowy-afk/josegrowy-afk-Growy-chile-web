@@ -3014,6 +3014,96 @@ export async function adminCancelExcelOrder(params: {
   return { ok: true, message: 'Orden marcada como anulada y registrada en Actividad.' };
 }
 
+export async function adminSendTestExcelEmail(params: {
+  admin: UserProfile;
+  recipientName: string;
+  recipientEmail: string;
+}): Promise<{ ok: boolean; licenseId?: string; missingResend?: boolean; message: string }> {
+  const token = await getCurrentIdToken();
+  const res = await fetch('/api/admin/excel-test-send', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      name: clampStr(params.recipientName, 100),
+      email: clampStr(params.recipientEmail, 160).toLowerCase(),
+    }),
+  });
+
+  const data = (await res.json()) as {
+    ok?: boolean;
+    licenseId?: string;
+    missingResend?: boolean;
+    message?: string;
+    error?: string;
+  };
+
+  if (res.ok && data.ok) {
+    try {
+      await logAdminAction({
+        adminUid: params.admin.uid,
+        adminEmail: params.admin.email,
+        action: 'Enviar correo de prueba Equilibrio Lite Excel',
+        target: clampStr(params.recipientEmail, 160).toLowerCase(),
+        details: `Envío de prueba (${data.licenseId || 'GROWY-PRUEBA01'}) a ${clampStr(params.recipientName, 100)}.`,
+      });
+    } catch {
+      // Silencioso si el log opcional falla
+    }
+  }
+
+  return {
+    ok: Boolean(res.ok && data.ok),
+    licenseId: data.licenseId,
+    missingResend: Boolean(data.missingResend),
+    message:
+      data.message ||
+      data.error ||
+      (res.ok
+        ? 'Correo de prueba enviado correctamente.'
+        : 'No se pudo enviar el correo de prueba.'),
+  };
+}
+
+export async function adminDownloadTestExcelPreview(params: {
+  recipientName: string;
+}): Promise<{ ok: boolean; filename?: string; message?: string }> {
+  const token = await getCurrentIdToken();
+  const res = await fetch('/api/admin/excel-test-download', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      name: clampStr(params.recipientName, 100),
+    }),
+  });
+
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { error?: string; message?: string };
+    return {
+      ok: false,
+      message: data.error || data.message || 'No pudimos generar la planilla de prueba.',
+    };
+  }
+
+  const blob = await res.blob();
+  const filename = 'Equilibrio-Lite-GROWY-PRUEBA01.xlsx';
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+
+  return { ok: true, filename };
+}
+
 /* ============================================================================
  * ANALÍTICA DE VISITAS EN VIVO E HISTÓRICA (SOLO ADMINISTRADOR)
  * ============================================================================ */

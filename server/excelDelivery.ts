@@ -468,12 +468,15 @@ async function sendDeliveryEmailWithResend(params: {
   productName: string;
   xlsxBuffer: Buffer;
   baseUrl: string;
-}): Promise<{ ok: true } | { ok: false; error: string }> {
+  isTest?: boolean;
+}): Promise<{ ok: true } | { ok: false; error: string; missingResend?: boolean }> {
   const apiKey = process.env.RESEND_API_KEY?.trim();
-  if (!apiKey) {
+  if (!apiKey || apiKey === 'reemplazar_por_tu_api_key_de_resend') {
     return {
       ok: false,
-      error: 'Falta configurar RESEND_API_KEY en el servidor para enviar correos.',
+      missingResend: true,
+      error:
+        'Falta configurar RESEND_API_KEY en el servidor para enviar correos. Puedes usar "Descargar Excel de prueba (.xlsx)" ahora mismo para revisar la planilla generada.',
     };
   }
 
@@ -558,6 +561,9 @@ async function sendDeliveryEmailWithResend(params: {
     return { text, html };
   };
 
+  const subjectPrefix = params.isTest ? '[Prueba] ' : '';
+  const emailSubject = `${subjectPrefix}Tu ${params.productName} está listo · Licencia ${params.order.licenseId}`;
+
   const primaryBodies = buildEmailBodies();
   const primaryRes = await fetch('https://api.resend.com/emails', {
     method: 'POST',
@@ -569,7 +575,7 @@ async function sendDeliveryEmailWithResend(params: {
       from,
       to: [params.order.email],
       reply_to: supportEmail,
-      subject: `Tu ${params.productName} está listo · Licencia ${params.order.licenseId}`,
+      subject: emailSubject,
       text: primaryBodies.text,
       html: primaryBodies.html,
       attachments: [
@@ -586,7 +592,9 @@ async function sendDeliveryEmailWithResend(params: {
   }
 
   const errText = await primaryRes.text().catch(() => '');
-  const signedLink = buildSignedDownloadUrl(params.baseUrl, params.order.id, params.order.licenseId);
+  const signedLink = params.isTest
+    ? null
+    : buildSignedDownloadUrl(params.baseUrl, params.order.id, params.order.licenseId);
   if ((primaryRes.status === 413 || primaryRes.status === 422) && signedLink) {
     const linkBodies = buildEmailBodies(signedLink);
     const fallbackRes = await fetch('https://api.resend.com/emails', {
@@ -599,7 +607,7 @@ async function sendDeliveryEmailWithResend(params: {
         from,
         to: [params.order.email],
         reply_to: supportEmail,
-        subject: `Tu ${params.productName} está listo · Licencia ${params.order.licenseId}`,
+        subject: emailSubject,
         text: linkBodies.text,
         html: linkBodies.html,
       }),
@@ -612,6 +620,84 @@ async function sendDeliveryEmailWithResend(params: {
   return {
     ok: false,
     error: `Resend respondió ${primaryRes.status}: ${errText.slice(0, 220) || 'Error al enviar el correo.'}`,
+  };
+}
+
+export function sanitizeTestExcelRecipient(body: unknown): {
+  ok: true;
+  name: string;
+  email: string;
+} | {
+  ok: false;
+  error: string;
+} {
+  const raw = body && typeof body === 'object' ? (body as Record<string, unknown>) : {};
+  const name = stripControlChars(
+    typeof raw.name === 'string' && raw.name.trim() ? raw.name : 'Prueba Admin GROWy'
+  ).slice(0, 100);
+  const email = stripControlChars(typeof raw.email === 'string' ? raw.email : '')
+    .toLowerCase()
+    .slice(0, 160);
+
+  if (name.length < 2 || name.length > 100) {
+    return { ok: false, error: 'El nombre de prueba debe tener entre 2 y 100 caracteres.' };
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email) || email.length > 160) {
+    return { ok: false, error: 'Ingresa un correo electrónico válido para la prueba.' };
+  }
+  return { ok: true, name, email };
+}
+
+export async function sendTestExcelEmail(params: {
+  name: string;
+  email: string;
+  baseUrl: string;
+}): Promise<{
+  ok: boolean;
+  licenseId: string;
+  missingResend?: boolean;
+  message: string;
+}> {
+  const { db } = getFirebaseAdminContext();
+  const cfg = await readExcelConfigFromFirestore(db);
+  const licenseId = 'GROWY-PRUEBA01';
+  const xlsxBuffer = await generatePersonalizedExcelBuffer({
+    licenseeName: params.name,
+    licenseId,
+  });
+
+  const testOrder: ExcelOrderDoc = {
+    id: 'test_preview',
+    name: params.name,
+    email: params.email,
+    status: 'pagada',
+    amountCLP: cfg.priceAmount,
+    licenseId,
+    termsAcceptedAt: new Date().toISOString(),
+    deliveryAttempts: 1,
+  };
+
+  const emailResult = await sendDeliveryEmailWithResend({
+    order: testOrder,
+    productName: cfg.productName,
+    xlsxBuffer,
+    baseUrl: params.baseUrl,
+    isTest: true,
+  });
+
+  if (!emailResult.ok) {
+    return {
+      ok: false,
+      licenseId,
+      missingResend: emailResult.missingResend,
+      message: emailResult.error,
+    };
+  }
+
+  return {
+    ok: true,
+    licenseId,
+    message: `Correo de prueba enviado a ${params.email} con el archivo Equilibrio-Lite-${licenseId}.xlsx adjunto.`,
   };
 }
 
@@ -883,11 +969,33 @@ export async function verifyAdminRequest(req: Request): Promise<
     if (email === BOOTSTRAPPED_ADMIN_EMAIL) {
       return { ok: true, uid: decoded.uid, email };
     }
-    const adminMarker = await db.collection('admins').doc(decoded.uid).get();
-    if (!adminMarker.exists) {
-      return { ok: false, status: 403, error: 'Permisos insuficientes de administrador.' };
+    try {
+      const adminMarker = await db.collection('admins').doc(decoded.uid).get();
+      if (!adminMarker.exists) {
+        return { ok: false, status: 403, error: 'Permisos insuficientes de administrador.' };
+      }
+      return { ok: true, uid: decoded.uid, email: email || decoded.uid };
+    } catch (firestoreErr) {
+      if (isAdminCredentialError(firestoreErr)) {
+        const cfg = readAppletConfig();
+        const projectId = process.env.FIREBASE_PROJECT_ID?.trim() || cfg.projectId;
+        const databaseId =
+          process.env.FIRESTORE_DATABASE_ID?.trim() || cfg.firestoreDatabaseId || '(default)';
+        if (projectId) {
+          const restRes = await fetch(
+            `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(projectId)}/databases/${encodeURIComponent(databaseId)}/documents/admins/${encodeURIComponent(decoded.uid)}`,
+            { headers: { Authorization: `Bearer ${idToken}` } }
+          );
+          if (restRes.ok) {
+            return { ok: true, uid: decoded.uid, email: email || decoded.uid };
+          }
+          if (restRes.status === 404 || restRes.status === 403) {
+            return { ok: false, status: 403, error: 'Permisos insuficientes de administrador.' };
+          }
+        }
+      }
+      throw firestoreErr;
     }
-    return { ok: true, uid: decoded.uid, email: email || decoded.uid };
   } catch (err) {
     if (isAdminCredentialError(err)) {
       return {

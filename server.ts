@@ -17,6 +17,8 @@ import {
   isAdminCredentialError,
   readExcelConfigFromFirestore,
   sanitizeAndValidateBuyerInput,
+  sanitizeTestExcelRecipient,
+  sendTestExcelEmail,
   verifyAdminRequest,
   verifyMercadoPagoPaymentForExcelOrder,
   verifySignedDownloadParams,
@@ -1535,6 +1537,93 @@ async function startServer() {
         return;
       }
       res.status(500).json({ ok: false, error: 'No se pudo anular la orden.' });
+    }
+  });
+
+  app.post('/api/admin/excel-test-send', async (req, res) => {
+    const authResult = await verifyAdminRequest(req);
+    if (!authResult.ok) {
+      res.status(authResult.status).json({ ok: false, error: authResult.error });
+      return;
+    }
+
+    const rate = checkIpRateLimit(req, 'verify', 15, 15 * 60 * 1000);
+    if (!rate.allowed) {
+      res.status(429).json({
+        ok: false,
+        error: `Demasiados envíos de prueba seguidos. Intenta en ${rate.retryAfterSec} segundos.`,
+      });
+      return;
+    }
+
+    const parsed = sanitizeTestExcelRecipient(req.body);
+    if (parsed.ok === false) {
+      res.status(400).json({ ok: false, error: parsed.error });
+      return;
+    }
+
+    try {
+      const result = await sendTestExcelEmail({
+        name: parsed.name,
+        email: parsed.email,
+        baseUrl: getPublicAppBaseUrl(req),
+      });
+      res.status(result.ok ? 200 : result.missingResend ? 400 : 502).json({
+        ok: result.ok,
+        licenseId: result.licenseId,
+        missingResend: Boolean(result.missingResend),
+        message: result.message,
+      });
+    } catch (err) {
+      console.error('[Admin Test Excel Send] Error:', err);
+      res.status(500).json({
+        ok: false,
+        error:
+          err instanceof Error
+            ? err.message
+            : 'No pudimos preparar ni enviar la planilla de prueba.',
+      });
+    }
+  });
+
+  app.post('/api/admin/excel-test-download', async (req, res) => {
+    const authResult = await verifyAdminRequest(req);
+    if (!authResult.ok) {
+      res.status(authResult.status).json({ ok: false, error: authResult.error });
+      return;
+    }
+
+    const rawName =
+      typeof (req.body as { name?: unknown })?.name === 'string'
+        ? String((req.body as { name?: string }).name)
+        : '';
+    const cleanName =
+      rawName.replace(/[\u0000-\u001F\u007F]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 100) ||
+      'Prueba Admin GROWy';
+
+    try {
+      const licenseId = 'GROWY-PRUEBA01';
+      const xlsxBuffer = await generatePersonalizedExcelBuffer({
+        licenseeName: cleanName,
+        licenseId,
+      });
+      const filename = `Equilibrio-Lite-${licenseId}.xlsx`;
+      res.setHeader(
+        'Content-Type',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      );
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      res.setHeader('Cache-Control', 'no-store');
+      res.status(200).send(xlsxBuffer);
+    } catch (err) {
+      console.error('[Admin Test Excel Download] Error:', err);
+      res.status(500).json({
+        ok: false,
+        error:
+          err instanceof Error
+            ? err.message
+            : 'No pudimos generar el archivo Excel de prueba.',
+      });
     }
   });
 
